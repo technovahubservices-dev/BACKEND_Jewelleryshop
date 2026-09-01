@@ -5,10 +5,20 @@ const asyncHandler = require('express-async-handler');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+let razorpay = null;
+
+const getRazorpayInstance = () => {
+  if (!razorpay) {
+    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+      throw new Error('Razorpay credentials are not configured');
+    }
+    razorpay = new Razorpay({
+      key_id: process.env.RAZORPAY_KEY_ID,
+      key_secret: process.env.RAZORPAY_KEY_SECRET,
+    });
+  }
+  return razorpay;
+};
 
 const createPaymentOrder = asyncHandler(async (req, res) => {
   const { orderId, paymentMethod, gateway = 'razorpay' } = req.body;
@@ -58,7 +68,7 @@ const createPaymentOrder = asyncHandler(async (req, res) => {
   }
 
   try {
-    const razorpayOrder = await razorpay.orders.create({
+    const razorpayOrder = await getRazorpayInstance().orders.create({
       amount: Math.round(order.totalPrice * 100),
       currency: 'INR',
       receipt: `order_${order._id.toString()}`,
@@ -97,7 +107,9 @@ const createPaymentOrder = asyncHandler(async (req, res) => {
     console.error('Payment order creation error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to create payment order',
+      message: error.message === 'Razorpay credentials are not configured'
+        ? 'Payment gateway is not configured'
+        : 'Failed to create payment order',
     });
   }
 });
@@ -222,7 +234,7 @@ const retryPayment = asyncHandler(async (req, res) => {
   }
 
   try {
-    const razorpayOrder = await razorpay.orders.create({
+    const razorpayOrder = await getRazorpayInstance().orders.create({
       amount: Math.round(order.totalPrice * 100),
       currency: 'INR',
       receipt: `order_${order._id.toString()}_retry_${order.paymentRetryCount + 1}`,
@@ -263,7 +275,9 @@ const retryPayment = asyncHandler(async (req, res) => {
     console.error('Payment retry error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to retry payment',
+      message: error.message === 'Razorpay credentials are not configured'
+        ? 'Payment gateway is not configured'
+        : 'Failed to retry payment',
     });
   }
 });
