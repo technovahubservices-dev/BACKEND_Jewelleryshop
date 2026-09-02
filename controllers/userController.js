@@ -1,23 +1,6 @@
 const User = require('../models/User');
 const asyncHandler = require('express-async-handler');
 
-const getAllUsers = asyncHandler(async (req, res) => {
-  if (!req.user || !req.user.isAdmin) {
-    return res.status(403).json({
-      success: false,
-      message: 'Not authorized to view users',
-    });
-  }
-
-  const users = await User.find({}).select('-password').sort({ createdAt: -1 });
-
-  res.status(200).json({
-    success: true,
-    count: users.length,
-    data: users,
-  });
-});
-
 const getProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id).select('-password');
   if (!user) {
@@ -233,7 +216,6 @@ const setDefaultAddress = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
-  getAllUsers,
   getProfile,
   updateProfile,
   changePassword,

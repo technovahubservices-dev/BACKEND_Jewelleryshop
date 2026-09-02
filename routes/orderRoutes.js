@@ -4,8 +4,6 @@ const {
   createOrder,
   getOrders,
   getOrder,
-  updateOrderStatus,
-  deleteOrder,
   convertQuotationToOrder,
 } = require('../controllers/orderController');
 const paymentRoutes = require('./paymentRoutes');
@@ -19,9 +17,7 @@ router.route('/convert-from-quotation/:quotationId')
   .post(protect, admin, convertQuotationToOrder);
 
 router.route('/:id')
-  .get(protect, getOrder)
-  .put(protect, admin, updateOrderStatus)
-  .delete(protect, admin, deleteOrder);
+  .get(protect, getOrder);
 
 router.use('/payment', paymentRoutes);
 
