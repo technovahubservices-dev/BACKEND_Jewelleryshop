@@ -51,7 +51,7 @@ app.get('/', (req, res) => {
   res.send('API is running...');
 });
 
-app.use('/api/auth', authLimiter, require('./routes/authRoutes'));
+app.use('/auth', authLimiter, require('./routes/authRoutes'));
 app.use('/api', apiLimiter);
 
 app.use('/api/users', require('./routes/userRoutes'));
