@@ -4,6 +4,10 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 let mongoServer;
 
 const connectDB = async () => {
+  if (process.env.NODE_ENV === 'test') {
+    return;
+  }
+
   const mongoUri = process.env.MONGO_URI;
 
   try {
@@ -16,21 +20,24 @@ const connectDB = async () => {
       return conn;
     }
   } catch (error) {
-    if (process.env.NODE_ENV === 'test') throw error;
     console.warn('MongoDB connection failed, falling back to in-memory server:', error.message);
-  }
-
-  if (process.env.NODE_ENV === 'test' && mongoServer) {
-    return;
   }
 
   try {
     if (!mongoServer) {
-      mongoServer = await MongoMemoryServer.create();
+      mongoServer = await MongoMemoryServer.create({
+        instance: {
+          timeoutSeconds: 120,
+          port: 27018,
+        },
+        binary: {
+          spawnWithDbPath: true,
+        },
+      });
     }
     const uri = mongoServer.getUri();
     const conn = await mongoose.connect(uri, {
-      serverSelectionTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 60000,
       socketTimeoutMS: 45000,
     });
     console.log(`MongoDB Connected (in-memory): ${conn.connection.host}`);

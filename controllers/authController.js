@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const registerUser = async (req, res) => {
+  try {
   const { name, email, password } = req.body;
 
   if (!name || !email || !password) {
@@ -38,9 +39,14 @@ const registerUser = async (req, res) => {
   } else {
     res.status(400).json({ message: 'Invalid user data' });
   }
+  } catch (error) {
+    console.error('Register error:', error);
+    res.status(500).json({ message: 'Server error during registration' });
+  }
 };
 
 const loginUser = async (req, res) => {
+  try {
   const { email, password } = req.body;
 
   const normalizedEmail = email ? email.toLowerCase().trim() : '';
@@ -59,6 +65,10 @@ const loginUser = async (req, res) => {
   }
 
   res.status(400).json({ message: 'Invalid credentials' });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ message: 'Server error during login' });
+  }
 };
 
 const generateToken = (id) => {
