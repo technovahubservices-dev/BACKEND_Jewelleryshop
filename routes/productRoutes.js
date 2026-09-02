@@ -7,12 +7,15 @@ const {
   getProduct,
   updateProduct,
   deleteProduct,
+  seedProducts,
 } = require('../controllers/productController');
 const { protect, admin } = require('../middleware/authMiddleware');
 
 router.route('/')
-  .get(getProducts)
-  .post(protect, admin, upload.array('images', 10), createProduct);
+    .get(getProducts)
+    .post(protect, admin, upload.array('images', 10), createProduct);
+
+router.post('/seed', protect, admin, seedProducts);
 
 router.route('/:id')
   .get(getProduct)
