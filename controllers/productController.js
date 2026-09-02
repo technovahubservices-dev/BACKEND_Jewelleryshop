@@ -1,5 +1,7 @@
 const Product = require('../models/Product');
 const path = require('path');
+const { uploadFilesToDrive } = require('../middleware/uploadImage');
+const googleDrive = require('../utils/googleDrive');
 
 const generateSKU = (name, category, metal) => {
   const metalMap = {
@@ -86,7 +88,7 @@ exports.createProduct = async (req, res) => {
       });
     }
 
-    const uploadedFiles = req.files ? req.files.map((f) => `/uploads/${f.filename}`) : [];
+    const uploadedFiles = req.files ? await uploadFilesToDrive(req.files) : [];
 
     if (uploadedFiles.length > 0) {
       const invalidUpload = uploadedFiles.some((f) => {
@@ -364,7 +366,7 @@ exports.updateProduct = async (req, res) => {
       }
     }
 
-    const uploadedFiles = req.files ? req.files.map((f) => `/uploads/${f.filename}`) : [];
+    const uploadedFiles = req.files ? await uploadFilesToDrive(req.files) : [];
 
     let newImageUrls = [];
     if (req.body.imageUrls !== undefined) {
@@ -393,6 +395,21 @@ exports.updateProduct = async (req, res) => {
         success: false,
         message: 'At least one product image is required',
       });
+    }
+
+    const oldImages = product.images || [];
+    const removedImages = oldImages.filter((oldImg) => !images.includes(oldImg));
+    for (const removedImg of removedImages) {
+      if (typeof removedImg === 'string' && removedImg.includes('drive.google.com/uc?export=view&id=')) {
+        const fileId = removedImg.split('id=')[1];
+        if (fileId) {
+          try {
+            await googleDrive.deleteFile(fileId);
+          } catch (driveError) {
+            console.error('Failed to delete removed Drive file:', driveError.message);
+          }
+        }
+      }
     }
 
     let parsedTags = tags;
@@ -479,6 +496,20 @@ exports.deleteProduct = async (req, res) => {
         success: false,
         message: 'Product not found',
       });
+    }
+
+    const imagesToDelete = product.images || [];
+    for (const img of imagesToDelete) {
+      if (typeof img === 'string' && img.includes('drive.google.com/uc?export=view&id=')) {
+        const fileId = img.split('id=')[1];
+        if (fileId) {
+          try {
+            await googleDrive.deleteFile(fileId);
+          } catch (driveError) {
+            console.error('Failed to delete Drive file for product', req.params.id, ':', driveError.message);
+          }
+        }
+      }
     }
 
     await product.deleteOne();
@@ -692,3 +723,4 @@ exports.seedProducts = async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to seed products' });
   }
 };
+

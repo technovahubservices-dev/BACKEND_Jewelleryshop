@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
+const googleDrive = require('../utils/googleDrive');
 
 const uploadDir = path.join(__dirname, '../..', 'uploads');
 if (!fs.existsSync(uploadDir)) {
@@ -9,7 +10,7 @@ if (!fs.existsSync(uploadDir)) {
 }
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
+  Destination: (req, file, cb) => {
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
@@ -34,5 +35,34 @@ const limits = {
 };
 
 const uploadImage = multer({ storage, fileFilter, limits });
+
+async function uploadFilesToDrive(files) {
+  if (!files || files.length === 0) return [];
+
+  const results = [];
+
+  for (const file of files) {
+    try {
+      const buffer = fs.readFileSync(file.path);
+      const driveResult = await googleDrive.uploadFile(
+        buffer,
+        file.originalname,
+        file.mimetype
+      );
+
+      fs.unlinkSync(file.path);
+
+      results.push(driveResult.url);
+    } catch (error) {
+      console.error('Failed to upload file to Drive:', file.originalname, error.message);
+      try { fs.unlinkSync(file.path); } catch (e) {}
+      results.push(file.path);
+    }
+  }
+
+  return results;
+}
+
+uploadImage.uploadFilesToDrive = uploadFilesToDrive;
 
 module.exports = uploadImage;

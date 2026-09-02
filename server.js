@@ -101,6 +101,7 @@ app.use('/api/content', require('./routes/contentRoutes'));
 app.use('/api/store', require('./routes/storeRoutes'));
 app.use('/api/admin/settings', require('./routes/adminSettingsRoutes'));
 app.use('/api/contact', require('./routes/contactRoutes'));
+app.use('/api/images', require('./routes/driveRoutes'));
 
 // Global error handler
 app.use((err, req, res, next) => {
