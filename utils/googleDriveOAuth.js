@@ -39,10 +39,16 @@ const getScopes = () => {
     return DEFAULT_SCOPES;
   }
 
-  return rawScopes
-    .split(/[,\s]+/)
-    .map((scope) => scope.trim())
+  const scopes = rawScopes
+    .trim()
+    .split(/\s+/)
+    .map((scope) => scope.replace(/^['"]+|['"]+$/g, ''))
     .filter(Boolean);
+
+  // Temporary safe diagnostic: scopes only, never OAuth credentials or tokens.
+  console.log('[Google Drive OAuth] Parsed scopes:', scopes);
+
+  return scopes.length ? scopes : DEFAULT_SCOPES;
 };
 
 const cleanupExpiredStates = () => {
