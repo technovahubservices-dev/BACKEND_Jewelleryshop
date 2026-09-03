@@ -100,6 +100,7 @@ app.use('/api/quotations', require('./routes/quotationRoutes'));
 app.use('/api/content', require('./routes/contentRoutes'));
 app.use('/api/store', require('./routes/storeRoutes'));
 app.use('/api/admin/settings', require('./routes/adminSettingsRoutes'));
+app.use('/api/integrations', require('./routes/googleDriveRoutes'));
 app.use('/api/contact', require('./routes/contactRoutes'));
 
 // Global error handler

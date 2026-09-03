@@ -3,9 +3,16 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const { registerUser, loginUser } = require('../controllers/authController');
+const { protect, admin } = require('../middleware/authMiddleware');
+const {
+  handleGoogleDriveCallback,
+  startGoogleDriveAuth,
+} = require('../controllers/googleDriveController');
 
 router.post('/register', registerUser);
 router.post('/login', loginUser);
+router.get('/google-drive', protect, admin, startGoogleDriveAuth);
+router.get('/google-drive/callback', handleGoogleDriveCallback);
 
 if (process.env.NODE_ENV !== 'production') {
   router.post('/seed', async (req, res) => {
