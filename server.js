@@ -10,6 +10,9 @@ const connectDB = require('./config/db');
 
 const app = express();
 
+// Render terminates TLS and forwards the original client IP in this header.
+app.set('trust proxy', 1);
+
 // Security
 app.use(helmet());
 

@@ -89,6 +89,10 @@ const startGoogleDriveAuth = asyncHandler(async (req, res) => {
   const state = createGoogleDriveState(req.user);
   const authUrl = buildGoogleDriveAuthUrl(state);
 
+  if (req.headers.accept && req.headers.accept.includes('application/json')) {
+    return res.json({ success: true, authUrl });
+  }
+
   res.redirect(302, authUrl);
 });
 
