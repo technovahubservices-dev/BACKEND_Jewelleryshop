@@ -15,6 +15,7 @@ const User = require('../models/User');
 const GoogleDriveConnection = require('../models/GoogleDriveConnection');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { getScopes } = require('../utils/googleDriveOAuth');
 
 const createAdminUser = async (email, password) => {
   const salt = await bcrypt.genSalt(10);
@@ -80,6 +81,15 @@ describe('Google Drive integration', () => {
     expect(res.statusCode).toBe(302);
     expect(res.headers.location).toContain('accounts.google.com/o/oauth2/v2/auth');
     expect(res.headers.location).toContain(`client_id=${encodeURIComponent(process.env.GOOGLE_CLIENT_ID)}`);
+  });
+
+  it('should parse quoted scopes into separate OAuth scopes', () => {
+    process.env.GOOGLE_DRIVE_SCOPES = '"https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly"';
+
+    expect(getScopes()).toEqual([
+      'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/drive.metadata.readonly',
+    ]);
   });
 
   it('should complete the OAuth callback and persist the connection', async () => {

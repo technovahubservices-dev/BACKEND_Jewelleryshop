@@ -40,9 +40,9 @@ const getScopes = () => {
   }
 
   const scopes = rawScopes
+    .replace(/^["']|["']$/g, '')
     .trim()
     .split(/\s+/)
-    .map((scope) => scope.replace(/^['"]+|['"]+$/g, ''))
     .filter(Boolean);
 
   // Temporary safe diagnostic: scopes only, never OAuth credentials or tokens.
