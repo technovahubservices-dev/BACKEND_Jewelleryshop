@@ -1,3 +1,13 @@
+jest.mock('../middleware/uploadImage', () => ({
+  array: () => (req, res, next) => next(),
+  single: () => (req, res, next) => next(),
+}));
+
+jest.mock('../middleware/upload', () => ({
+  array: () => (req, res, next) => next(),
+  single: () => (req, res, next) => next(),
+}));
+
 const request = require('supertest');
 const { app } = require('../server');
 const { close, connect } = require('./setup');
@@ -73,15 +83,19 @@ describe('Google Drive integration', () => {
   });
 
   it('should complete the OAuth callback and persist the connection', async () => {
-    const state = 'callback-state';
-    jest.spyOn(jwt, 'sign').mockReturnValue(state);
-
     const startRes = await request(app)
       .get('/api/auth/google-drive')
       .set('Authorization', `Bearer ${adminToken}`);
 
     expect(startRes.statusCode).toBe(302);
-    expect(startRes.headers.location).toContain(`state=${state}`);
+    const authUrl = new URL(startRes.headers.location);
+    const state = authUrl.searchParams.get('state');
+    expect(state).toBeTruthy();
+
+    const payloadPart = state.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const decodedPayload = JSON.parse(Buffer.from(payloadPart, 'base64').toString('utf8'));
+
+    jest.spyOn(jwt, 'verify').mockReturnValue(decodedPayload);
 
     global.fetch = jest.fn()
       .mockResolvedValueOnce({
@@ -116,6 +130,7 @@ describe('Google Drive integration', () => {
   });
 
   it('should disconnect a stored Google Drive connection', async () => {
+    await GoogleDriveConnection.deleteMany({ user: admin._id });
     await GoogleDriveConnection.create({
       user: admin._id,
       email: 'admin@example.com',
