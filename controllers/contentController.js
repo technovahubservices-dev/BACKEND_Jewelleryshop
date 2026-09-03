@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
+const fs = require('fs');
+const googleDrive = require('../utils/googleDrive');
 
 require('../models/HeroBanner');
 require('../models/FeaturedProduct');
@@ -134,7 +136,14 @@ const create = (modelKey) => asyncHandler(async (req, res) => {
   const body = { ...req.body };
 
   if (req.file) {
-    body.image = `/uploads/${req.file.filename}`;
+    const fileBuffer = fs.readFileSync(req.file.path);
+    const driveResult = await googleDrive.uploadFile(
+      fileBuffer,
+      req.file.originalname,
+      req.file.mimetype
+    );
+    fs.unlinkSync(req.file.path);
+    body.image = driveResult.url;
   }
 
   if (body.sortOrder === undefined || body.sortOrder === null || body.sortOrder === '') {
@@ -156,7 +165,14 @@ const update = (modelKey) => asyncHandler(async (req, res) => {
   const body = { ...req.body };
 
   if (req.file) {
-    body.image = `/uploads/${req.file.filename}`;
+    const fileBuffer = fs.readFileSync(req.file.path);
+    const driveResult = await googleDrive.uploadFile(
+      fileBuffer,
+      req.file.originalname,
+      req.file.mimetype
+    );
+    fs.unlinkSync(req.file.path);
+    body.image = driveResult.url;
   }
 
   let item;
@@ -318,11 +334,21 @@ const uploadImage = asyncHandler(async (req, res) => {
       message: 'No file uploaded',
     });
   }
-  const url = `/uploads/${req.file.filename}`;
+
+  const fileBuffer = fs.readFileSync(req.file.path);
+  const driveResult = await googleDrive.uploadFile(
+    fileBuffer,
+    req.file.originalname,
+    req.file.mimetype
+  );
+
+  fs.unlinkSync(req.file.path);
+
   res.status(200).json({
     success: true,
     message: 'Image uploaded successfully',
-    url,
+    url: driveResult.url,
+    fileId: driveResult.fileId,
   });
 });
 
@@ -375,7 +401,17 @@ const updateHomepageTabWithUpload = asyncHandler(async (req, res) => {
   // text fields don't accidentally blank out the existing image.
   if (req.file && TABS_WITH_IMAGE[tab]) {
     const imageField = TABS_WITH_IMAGE[tab];
-    settings[imageField] = `/uploads/${req.file.filename}`;
+
+    const fileBuffer = fs.readFileSync(req.file.path);
+    const driveResult = await googleDrive.uploadFile(
+      fileBuffer,
+      req.file.originalname,
+      req.file.mimetype
+    );
+
+    fs.unlinkSync(req.file.path);
+
+    settings[imageField] = driveResult.url;
   }
 
   await settings.save();

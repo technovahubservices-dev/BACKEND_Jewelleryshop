@@ -10,6 +10,9 @@ const connectDB = require('./config/db');
 
 const app = express();
 
+// 💡 FIX FOR RENDER: Trust proxy to pass correct user IPs to rate limiters
+app.enable('trust proxy');
+
 // Security
 app.use(helmet());
 
@@ -105,6 +108,12 @@ app.use('/api/images', require('./routes/driveRoutes'));
 
 // Global error handler
 app.use((err, req, res, next) => {
+  // Enhanced console logging to catch exact schema errors in Render logs
+  console.log("--- EXPLICIT SERVER ERROR LOG ---");
+  console.log("Name:", err.name);
+  console.log("Message:", err.message);
+  console.log("---------------------------------");
+  
   console.error(err.stack || err.message);
 
   if (err.name === 'CastError') {

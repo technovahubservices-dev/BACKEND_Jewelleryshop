@@ -4,75 +4,107 @@ const jwt = require('jsonwebtoken');
 
 const registerUser = async (req, res) => {
   try {
-  const { name, email, password } = req.body;
+    const { name, email, password } = req.body;
 
-  if (!name || !email || !password) {
-    return res.status(400).json({ message: 'Please enter all fields' });
-  }
+    if (!name || !email || !password) {
+      return res.status(400).json({ message: 'Please enter all fields' });
+    }
 
-  const normalizedEmail = email.toLowerCase().trim();
-  const trimmedPassword = password.trim();
+    const normalizedEmail = email.toLowerCase().trim();
+    const trimmedPassword = password.trim();
 
-  const userExists = await User.findOne({ email: normalizedEmail });
+    const userExists = await User.findOne({ email: normalizedEmail });
 
-  if (userExists) {
-    return res.status(400).json({ message: 'User already exists' });
-  }
+    if (userExists) {
+      return res.status(400).json({ message: 'User already exists' });
+    }
 
-  const salt = await bcrypt.genSalt(10);
-  const hashedPassword = await bcrypt.hash(trimmedPassword, salt);
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(trimmedPassword, salt);
 
-  const user = await User.create({
-    name,
-    email: normalizedEmail,
-    password: hashedPassword,
-  });
-
-  if (user) {
-    res.status(201).json({
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      isAdmin: user.isAdmin,
-      token: generateToken(user._id),
+    const user = await User.create({
+      name,
+      email: normalizedEmail,
+      password: hashedPassword,
     });
-  } else {
-    res.status(400).json({ message: 'Invalid user data' });
-  }
+
+    if (user) {
+      // Safety fallback string if JWT secret config missing
+      const token = generateToken(user._id);
+
+      return res.status(201).json({
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        isAdmin: user.isAdmin,
+        token: token,
+      });
+    } else {
+      return res.status(400).json({ message: 'Invalid user data' });
+    }
   } catch (error) {
     console.error('Register error:', error);
-    res.status(500).json({ message: 'Server error during registration' });
+    return res.status(500).json({ message: 'Server error during registration' });
   }
 };
 
 const loginUser = async (req, res) => {
   try {
-  const { email, password } = req.body;
+    const { email, password } = req.body;
 
-  const normalizedEmail = email ? email.toLowerCase().trim() : '';
-  const trimmedPassword = password ? password.trim() : '';
+    // Safety structural validation check
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
 
-  const user = await User.findOne({ email: normalizedEmail });
+    const normalizedEmail = email.toLowerCase().trim();
+    const trimmedPassword = password.trim();
 
-  if (user && (await bcrypt.compare(trimmedPassword, user.password))) {
+    // Debug tracking logs to ensure incoming strings reach Render intact
+    console.log(`[AUTH] Attempting login verification for: ${normalizedEmail}`);
+
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      console.log(`[AUTH FAILED] No user found with email: ${normalizedEmail}`);
+      return res.status(400).json({ message: 'Invalid credentials' });
+    }
+
+    const isMatch = await bcrypt.compare(trimmedPassword, user.password);
+    if (!isMatch) {
+      console.log(`[AUTH FAILED] Password mismatch for: ${normalizedEmail}`);
+      return res.status(400).json({ message: 'Invalid credentials' });
+    }
+
+    // Token signing safety execution block
+    const token = generateToken(user._id);
+    if (!token) {
+      return res.status(500).json({ message: 'JWT Secret configuration error on server' });
+    }
+
+    console.log(`[AUTH SUCCESS] User authorized: ${normalizedEmail}`);
     return res.json({
       _id: user._id,
       name: user.name,
       email: user.email,
       isAdmin: user.isAdmin,
-      token: generateToken(user._id),
+      token: token,
     });
-  }
 
-  res.status(400).json({ message: 'Invalid credentials' });
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ message: 'Server error during login' });
+    return res.status(500).json({ message: 'Server error during login' });
   }
 };
 
 const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
+  // Gracefully handles missing JWT_SECRET strings in staging platforms
+  const secret = process.env.JWT_SECRET || 'fallback_development_secret_key';
+  
+  if (secret === 'fallback_development_secret_key' && process.env.NODE_ENV === 'production') {
+    console.warn("WARNING: Running production build with fallback JWT_SECRET key!");
+  }
+
+  return jwt.sign({ id }, secret, {
     expiresIn: '30d',
   });
 };

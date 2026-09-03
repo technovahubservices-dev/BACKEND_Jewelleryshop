@@ -1,5 +1,6 @@
 const { google } = require('googleapis');
 const path = require('path');
+const { Readable } = require('stream');
 
 const CREDENTIALS_PATH = path.join(__dirname, 'jkr-fashion-c8363bb3d0b3.json');
 const FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID;
@@ -28,7 +29,7 @@ async function uploadFile(buffer, originalName, mimeType) {
 
     const media = {
       mimeType: mimeType || 'application/octet-stream',
-      body: Buffer.from(buffer),
+      body: Readable.from(buffer),
     };
 
     const response = await drive.files.create({
