@@ -1,7 +1,23 @@
 const Product = require('../models/Product');
-const path = require('path');
 const { uploadFilesToDrive } = require('../middleware/uploadImage');
 const googleDrive = require('../utils/googleDrive');
+
+const getValidSubcategories = () => {
+  const schemaPath = Product.schema.path('subcategory');
+  if (schemaPath && schemaPath.options && Array.isArray(schemaPath.options.enum)) {
+    return schemaPath.options.enum;
+  }
+  return [];
+};
+
+const validateSubcategory = (subcategory) => {
+  if (!subcategory) return null;
+  const valid = getValidSubcategories();
+  if (!valid.includes(subcategory)) {
+    return `Invalid subcategory "${subcategory}". Valid subcategories are: ${valid.join(', ')}.`;
+  }
+  return null;
+};
 
 const generateSKU = (name, category, metal) => {
   const metalMap = {
@@ -88,20 +104,17 @@ exports.createProduct = async (req, res) => {
       });
     }
 
-    const uploadedFiles = req.files ? await uploadFilesToDrive(req.files) : [];
-
-    if (uploadedFiles.length > 0) {
-      const invalidUpload = uploadedFiles.some((f) => {
-        const ext = path.extname(f).toLowerCase();
-        return !/\.(jpg|jpeg|png|webp|gif)$/.test(ext);
-      });
-      if (invalidUpload) {
+    if (subcategory) {
+      const subcatError = validateSubcategory(subcategory);
+      if (subcatError) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid file type. Only image files are allowed.',
+          message: subcatError,
         });
       }
     }
+
+    const uploadedFiles = req.files ? await uploadFilesToDrive(req.files) : [];
 
     let imageUrls = [];
     if (typeof req.body.imageUrls === 'string') {
@@ -138,20 +151,9 @@ exports.createProduct = async (req, res) => {
       });
     }
 
-    let sku = manualSku ? manualSku.trim() : '';
-    if (!sku) {
-      const skuPrefix = generateSKU(name, category, metal);
-      const skuNum = await getNextSkuNumber(skuPrefix);
-      sku = `${skuPrefix}-${skuNum}`;
-    } else {
-      const existingProduct = await Product.findOne({ sku: sku });
-      if (existingProduct) {
-        return res.status(400).json({
-          success: false,
-          message: 'A product with this SKU already exists',
-        });
-      }
-    }
+    const skuPrefix = generateSKU(name, category, metal);
+    let skuNum = await getNextSkuNumber(skuPrefix);
+    let sku = `${skuPrefix}-${skuNum}`;
 
     let parsedTags = tags;
     if (typeof tags === 'string') {
@@ -195,7 +197,29 @@ exports.createProduct = async (req, res) => {
     if (minimumStock !== undefined && minimumStock !== '') productData.minimumStock = parseInt(minimumStock, 10);
     if (availableWeight) productData.availableWeight = availableWeight;
 
-    const product = await Product.create(productData);
+    let product;
+    let skuRetries = 0;
+    const maxSkuRetries = 5;
+    while (skuRetries <= maxSkuRetries) {
+      try {
+        productData.sku = sku;
+        product = await Product.create(productData);
+        break;
+      } catch (error) {
+        if (error.code === 11000 && error.keyValue && error.keyValue.sku) {
+          skuRetries++;
+          if (skuRetries > maxSkuRetries) {
+            throw error;
+          }
+          skuNum = (parseInt(skuNum, 10) + 1).toString().padStart(3, '0');
+          sku = `${skuPrefix}-${skuNum}`;
+        } else if (error.code === 11000 && error.keyValue && error.keyValue.slug) {
+          productData.slug = `${productData.slug}-${Date.now()}`;
+        } else {
+          throw error;
+        }
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -226,7 +250,7 @@ exports.createProduct = async (req, res) => {
 
 exports.getProducts = async (req, res) => {
   try {
-    const { search, category, status, sort, page = 1, limit = 20 } = req.query;
+    const { search, category, status, sort, page = 1, limit = 20, jewelleryCollection, subcategory } = req.query;
 
     const query = {};
 
@@ -243,6 +267,20 @@ exports.getProducts = async (req, res) => {
       if (trimmedCategory) {
         const escaped = trimmedCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         query.category = { $regex: new RegExp(`^${escaped}$`, 'i') };
+      }
+    }
+
+    if (jewelleryCollection) {
+      const trimmedCollection = String(jewelleryCollection).trim();
+      if (trimmedCollection) {
+        query.jewelleryCollection = trimmedCollection;
+      }
+    }
+
+    if (subcategory) {
+      const trimmedSubcategory = String(subcategory).trim();
+      if (trimmedSubcategory) {
+        query.subcategory = trimmedSubcategory;
       }
     }
 
@@ -353,15 +391,29 @@ exports.updateProduct = async (req, res) => {
       });
     }
 
-    if (manualSku && manualSku.trim() && manualSku.trim() !== product.sku) {
-      const existingProduct = await Product.findOne({
-        sku: manualSku.trim(),
-        _id: { $ne: product._id },
-      });
-      if (existingProduct) {
+    if (manualSku && manualSku.trim()) {
+      const newSku = manualSku.trim();
+      if (newSku !== product.sku) {
+        const existingProduct = await Product.findOne({
+          sku: newSku,
+          _id: { $ne: product._id },
+        });
+        if (existingProduct) {
+          return res.status(400).json({
+            success: false,
+            message: 'A product with this SKU already exists',
+          });
+        }
+        product.sku = newSku;
+      }
+    }
+
+    if (subcategory) {
+      const subcatError = validateSubcategory(subcategory);
+      if (subcatError) {
         return res.status(400).json({
           success: false,
-          message: 'A product with this SKU already exists',
+          message: subcatError,
         });
       }
     }
@@ -421,9 +473,6 @@ exports.updateProduct = async (req, res) => {
     }
 
     product.name = name ? name.trim() : product.name;
-    if (manualSku && manualSku.trim()) {
-      product.sku = manualSku.trim();
-    }
     if (description !== undefined && description !== null) product.description = description;
     if (price !== undefined && price !== '' && price !== null) product.price = parseFloat(price);
     if (discountPrice !== undefined && discountPrice !== '') {

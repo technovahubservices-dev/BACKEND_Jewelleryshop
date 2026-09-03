@@ -11,6 +11,7 @@ const getTransporter = () => {
   const pass = process.env.SMTP_PASS;
 
   if (!host || !user || !pass) {
+    console.error('[mailer] SMTP configuration missing. Set SMTP_HOST, SMTP_USER, and SMTP_PASS in .env');
     return null;
   }
 
@@ -40,11 +41,13 @@ const escapeHtml = (str) => {
     .replace(/'/g, '&#39;');
 };
 
-const buildInquiryEmail = ({ name, email, message, storeName }) => {
+const buildInquiryEmail = ({ name, email, phone, message, storeName, submittedAt }) => {
   const safeName = escapeHtml(name);
   const safeEmail = escapeHtml(email);
+  const safePhone = escapeHtml(phone || '');
   const safeMessage = escapeHtml(message).replace(/\n/g, '<br/>');
   const safeStore = escapeHtml(storeName || 'Store');
+  const safeDate = escapeHtml(submittedAt || new Date().toISOString());
 
   const subject = `New enquiry from ${name} via ${safeStore} website`;
 
@@ -61,6 +64,18 @@ const buildInquiryEmail = ({ name, email, message, storeName }) => {
           <td style="background:#f3f4f6; font-weight:bold;">Email</td>
           <td><a href="mailto:${safeEmail}">${safeEmail}</a></td>
         </tr>
+        <tr>
+          <td style="background:#f3f4f6; font-weight:bold;">Phone</td>
+          <td>${safePhone || 'N/A'}</td>
+        </tr>
+        <tr>
+          <td style="background:#f3f4f6; font-weight:bold;">Subject</td>
+          <td>${escapeHtml(subject)}</td>
+        </tr>
+        <tr>
+          <td style="background:#f3f4f6; font-weight:bold;">Date</td>
+          <td>${safeDate}</td>
+        </tr>
       </table>
       <h3 style="margin-top: 20px; color:#013220;">Message</h3>
       <div style="white-space: normal; padding: 12px; background: #f9fafb; border-left: 4px solid #013220; border-radius: 4px;">
@@ -72,24 +87,26 @@ const buildInquiryEmail = ({ name, email, message, storeName }) => {
     </div>
   `;
 
-  const text = `New Contact Enquiry (${safeStore})\n\nName: ${name}\nEmail: ${email}\n\nMessage:\n${message}`;
+  const text = `New Contact Enquiry (${safeStore})\n\nDate: ${safeDate}\nName: ${name}\nEmail: ${email}\nPhone: ${safePhone || 'N/A'}\nSubject: ${subject}\n\nMessage:\n${message}`;
 
   return { subject, html, text };
 };
 
-const sendInquiryEmail = async ({ to, fromName, fromEmail, name, email, message, storeName }) => {
+const sendInquiryEmail = async ({ to, fromName, fromEmail, name, email, phone, message, storeName }) => {
   if (!to) {
+    console.error('[mailer] No recipient address configured for inquiry email');
     return { delivered: false, error: 'No recipient address configured' };
   }
 
   const transporter = getTransporter();
-  const { subject, html, text } = buildInquiryEmail({ name, email, message, storeName });
+  const submittedAt = new Date().toISOString();
+  const { subject, html, text } = buildInquiryEmail({ name, email, phone, message, storeName, submittedAt });
 
   const fromAddress = process.env.MAIL_FROM || (process.env.SMTP_USER ? `"${fromName || storeName || 'Website'}" <${process.env.SMTP_USER}>` : undefined);
 
   if (!transporter || !fromAddress) {
-    console.warn('[mailer] SMTP not configured. Inquiry payload:', { to, subject, from: fromEmail, name, message });
-    return { delivered: false, error: 'SMTP not configured' };
+    console.warn('[mailer] SMTP not configured. Inquiry payload:', { to, subject, from: fromEmail, name, email, phone, message });
+    return { delivered: false, error: 'SMTP not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS in .env' };
   }
 
   try {
@@ -103,7 +120,10 @@ const sendInquiryEmail = async ({ to, fromName, fromEmail, name, email, message,
     });
     return { delivered: true };
   } catch (err) {
-    console.error('[mailer] Inquiry email failed:', err.message);
+    console.error('[mailer] Inquiry email failed to send:', err.message);
+    if (err.code) {
+      console.error(`[mailer] SMTP error code: ${err.code}`);
+    }
     return { delivered: false, error: err.message };
   }
 };

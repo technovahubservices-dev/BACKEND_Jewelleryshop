@@ -37,15 +37,19 @@ const submitContactEnquiry = [
     const recipient = (settings.email || '').trim().toLowerCase();
 
     if (!recipient || !/^\S+@\S+\.\S+$/.test(recipient)) {
+      console.error('[contact] Store contact email is not configured in admin settings');
       return res.status(503).json({
         success: false,
         message: 'Store contact email is not configured. Please update it in Admin Settings.',
       });
     }
 
+    const normalizedPhone = phone ? String(phone).trim().slice(0, 30) : '';
+
     const enquiry = await ContactEnquiry.create({
       name: String(name).trim().slice(0, 120),
       email: normalizedEmail,
+      phone: normalizedPhone,
       message: String(message).trim().slice(0, 5000),
       routedTo: recipient,
     });
@@ -56,6 +60,7 @@ const submitContactEnquiry = [
       fromEmail: normalizedEmail,
       name: enquiry.name,
       email: enquiry.email,
+      phone: enquiry.phone,
       message: enquiry.message,
       storeName: settings.storeName,
     });
@@ -65,10 +70,12 @@ const submitContactEnquiry = [
     await enquiry.save();
 
     if (!result.delivered) {
+      console.error(`[contact] Failed to send inquiry email to ${recipient}: ${result.error}`);
       return res.status(202).json({
         success: true,
         message: 'Enquiry received. Email delivery is currently unavailable; the team will follow up manually.',
         delivered: false,
+        error: result.error,
       });
     }
 

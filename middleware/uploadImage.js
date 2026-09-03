@@ -10,7 +10,7 @@ if (!fs.existsSync(uploadDir)) {
 }
 
 const storage = multer.diskStorage({
-  Destination: (req, file, cb) => {
+  destination: (req, file, cb) => {
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
@@ -55,8 +55,7 @@ async function uploadFilesToDrive(files) {
       results.push(driveResult.url);
     } catch (error) {
       console.error('Failed to upload file to Drive:', file.originalname, error.message);
-      try { fs.unlinkSync(file.path); } catch (e) {}
-      results.push(file.path);
+      results.push(`/uploads/${file.filename}`);
     }
   }
 

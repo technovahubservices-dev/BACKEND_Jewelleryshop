@@ -10,8 +10,8 @@ const productSchema = mongoose.Schema(
     },
     sku: {
       type: String,
+      required: [true, 'SKU is required'],
       unique: true,
-      sparse: true,
       trim: true,
       maxlength: [50, 'SKU cannot exceed 50 characters'],
     },
@@ -68,6 +68,11 @@ const productSchema = mongoose.Schema(
         'Bangles',
         'Cuffs',
         'Chain Bracelets',
+        'Hair Accessories',
+        'Anklets',
+        'Kumkum Box',
+        'Bindi',
+        'Other Accessories',
       ],
     },
     jewelleryCollection: {
@@ -80,6 +85,7 @@ const productSchema = mongoose.Schema(
         'Aura',
         'New Arrival',
         'Best Seller',
+        'Premium Bride',
       ],
     },
     metal: {
