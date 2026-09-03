@@ -1,5 +1,6 @@
 const Product = require('../models/Product');
 const path = require('path');
+const { uploadRequestFilesToGoogleDrive } = require('../utils/googleDriveStorage');
 
 const generateSKU = (name, category, metal) => {
   const metalMap = {
@@ -86,7 +87,8 @@ exports.createProduct = async (req, res) => {
       });
     }
 
-    const uploadedFiles = req.files ? req.files.map((f) => `/uploads/${f.filename}`) : [];
+    const driveFiles = await uploadRequestFilesToGoogleDrive(req, { makePublic: true });
+    const uploadedFiles = driveFiles.map((file) => file.url);
 
     if (uploadedFiles.length > 0) {
       const invalidUpload = uploadedFiles.some((f) => {
@@ -364,7 +366,8 @@ exports.updateProduct = async (req, res) => {
       }
     }
 
-    const uploadedFiles = req.files ? req.files.map((f) => `/uploads/${f.filename}`) : [];
+    const driveFiles = await uploadRequestFilesToGoogleDrive(req, { makePublic: true });
+    const uploadedFiles = driveFiles.map((file) => file.url);
 
     let newImageUrls = [];
     if (req.body.imageUrls !== undefined) {
