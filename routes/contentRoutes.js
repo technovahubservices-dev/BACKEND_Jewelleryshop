@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const upload = require('../middleware/upload');
+const uploadImageMemory = require('../middleware/uploadImageMemory');
 const {
   getAll,
   getActive,
@@ -18,6 +18,35 @@ const {
 } = require('../controllers/contentController');
 const { protect, admin } = require('../middleware/authMiddleware');
 
+const CMS_IMAGE_FIELDS = [
+  { name: 'image', maxCount: 1 },
+  { name: 'file', maxCount: 1 },
+];
+
+const contentImageMiddleware = uploadImageMemory.fields(CMS_IMAGE_FIELDS);
+
+router.use((err, req, res, next) => {
+  if (err && err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({
+      success: false,
+      message: 'Uploaded image is too large. Maximum size is 10MB.',
+    });
+  }
+  if (err && err.code === 'LIMIT_FILE_COUNT') {
+    return res.status(400).json({
+      success: false,
+      message: 'Too many image files uploaded.',
+    });
+  }
+  if (err && err instanceof Error) {
+    return res.status(400).json({
+      success: false,
+      message: err.message || 'Invalid image upload.',
+    });
+  }
+  next(err);
+});
+
 const CONTENT_TYPES = [
   'heroBanners',
   'featuredProducts',
@@ -30,7 +59,7 @@ const CONTENT_TYPES = [
 CONTENT_TYPES.forEach((type) => {
   router.route(`/${type}`)
     .get(protect, admin, getAll(type))
-    .post(protect, admin, upload.single('image'), create(type));
+    .post(protect, admin, contentImageMiddleware, create(type));
 
   router.route(`/${type}/active`)
     .get(getActive(type));
@@ -40,7 +69,7 @@ CONTENT_TYPES.forEach((type) => {
 
   router.route(`/${type}/:id`)
     .get(protect, admin, getById(type))
-    .put(protect, admin, upload.single('image'), update(type))
+    .put(protect, admin, contentImageMiddleware, update(type))
     .delete(protect, admin, remove(type));
 
   router.route(`/${type}/:id/toggle`)
@@ -55,10 +84,7 @@ router.route('/homepage/upload')
   .post(
     protect,
     admin,
-    upload.fields([
-      { name: 'file', maxCount: 1 },
-      { name: 'image', maxCount: 1 },
-    ]),
+    contentImageMiddleware,
     uploadImage
   );
 
@@ -69,10 +95,7 @@ router.route('/homepage/settings/updateTabWithUpload')
   .put(
     protect,
     admin,
-    upload.fields([
-      { name: 'image', maxCount: 1 },
-      { name: 'file', maxCount: 1 },
-    ]),
+    contentImageMiddleware,
     updateHomepageTabWithUpload
   );
 

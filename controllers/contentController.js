@@ -196,12 +196,22 @@ const getById = (modelKey) => asyncHandler(async (req, res) => {
   });
 });
 
+const resolveUploadedImageFile = (req) => {
+  return req.file
+    || (req.files && (req.files.image?.[0] || req.files.file?.[0]))
+    || null;
+};
+
 const create = (modelKey) => asyncHandler(async (req, res) => {
   const Model = contentModels[modelKey];
   const body = { ...req.body };
 
-  if (req.file) {
-    const driveFile = await uploadRequestFileToGoogleDrive(req, { makePublic: true });
+  const uploadedFile = resolveUploadedImageFile(req);
+  if (uploadedFile) {
+    const driveFile = await uploadRequestFileToGoogleDrive(
+      { ...req, file: uploadedFile },
+      { makePublic: true }
+    );
     body.image = driveFile.url;
   }
 
@@ -214,10 +224,13 @@ const create = (modelKey) => asyncHandler(async (req, res) => {
 
   const item = await Model.create(normalizedBody);
 
+  const plainItem = typeof item?.toObject === 'function' ? item.toObject() : item;
+
   res.status(201).json({
     success: true,
     message: `${CONTENT_TYPES[modelKey] || 'Item'} created successfully`,
-    data: item,
+    url: plainItem.image || null,
+    data: normalizeContentItemImageUrls(plainItem),
   });
 });
 
@@ -225,8 +238,12 @@ const update = (modelKey) => asyncHandler(async (req, res) => {
   const Model = contentModels[modelKey];
   const body = { ...req.body };
 
-  if (req.file) {
-    const driveFile = await uploadRequestFileToGoogleDrive(req, { makePublic: true });
+  const uploadedFile = resolveUploadedImageFile(req);
+  if (uploadedFile) {
+    const driveFile = await uploadRequestFileToGoogleDrive(
+      { ...req, file: uploadedFile },
+      { makePublic: true }
+    );
     body.image = driveFile.url;
   }
 
@@ -267,6 +284,7 @@ const update = (modelKey) => asyncHandler(async (req, res) => {
   res.status(200).json({
     success: true,
     message: `${CONTENT_TYPES[modelKey] || 'Item'} updated successfully`,
+    url: plainUpdated.image || null,
     data: normalizeContentItemImageUrls(plainUpdated),
   });
 });

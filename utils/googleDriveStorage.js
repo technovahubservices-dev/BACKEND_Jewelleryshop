@@ -132,15 +132,21 @@ const requestDrive = async (userId, requestOptions) => {
   return response;
 };
 
-const uploadFileToGoogleDrive = async ({ userId, filePath, originalName, mimeType, makePublic = false }) => {
-  if (!filePath || !fs.existsSync(filePath)) {
+const uploadFileToGoogleDrive = async ({ userId, filePath, buffer, originalName, mimeType, makePublic = false }) => {
+  let fileBuffer;
+  if (Buffer.isBuffer(buffer)) {
+    fileBuffer = buffer;
+  } else if (filePath && fs.existsSync(filePath)) {
+    fileBuffer = await fs.promises.readFile(filePath);
+  } else {
     throw driveError('Uploaded file is no longer available on the server');
   }
 
-  const name = `${Date.now()}-${path.basename(originalName || path.basename(filePath))}`;
+  const name = `${Date.now()}-${path.basename(originalName || 'image')}`;
   console.log('[Google Drive Upload] Preparing file upload', {
     userId: String(userId),
-    filePath,
+    filePath: filePath || null,
+    inMemory: Buffer.isBuffer(buffer),
     originalName,
     mimeType,
     name,
@@ -154,7 +160,6 @@ const uploadFileToGoogleDrive = async ({ userId, filePath, originalName, mimeTyp
     name,
     parents: [process.env.GOOGLE_DRIVE_FOLDER_ID],
   };
-  const fileBuffer = await fs.promises.readFile(filePath);
   const form = new FormData();
   form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
   form.append('file', new Blob([fileBuffer], { type: mimeType || 'application/octet-stream' }), name);
@@ -244,6 +249,7 @@ const uploadRequestFilesToGoogleDrive = async (req, { makePublic = false } = {})
     uploaded.push(await uploadFileToGoogleDrive({
       userId: req.user._id,
       filePath: file.path,
+      buffer: file.buffer,
       originalName: file.originalname,
       mimeType: file.mimetype,
       makePublic,
@@ -258,6 +264,7 @@ const uploadRequestFileToGoogleDrive = async (req, { makePublic = false } = {}) 
   return uploadFileToGoogleDrive({
     userId: req.user._id,
     filePath: req.file.path,
+    buffer: req.file.buffer,
     originalName: req.file.originalname,
     mimeType: req.file.mimetype,
     makePublic,
