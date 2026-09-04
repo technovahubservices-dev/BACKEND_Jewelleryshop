@@ -1,6 +1,9 @@
 const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
-const { uploadRequestFileToGoogleDrive } = require('../utils/googleDriveStorage');
+const {
+  deleteDriveFilesForUrls,
+  uploadRequestFileToGoogleDrive,
+} = require('../utils/googleDriveStorage');
 
 require('../models/HeroBanner');
 require('../models/FeaturedProduct');
@@ -219,6 +222,16 @@ const remove = (modelKey) => asyncHandler(async (req, res) => {
     });
   }
 
+  const imageUrls = [
+    item.image,
+    item.mobileImage,
+    ...(Array.isArray(item.heroSlides) ? item.heroSlides.map((slide) => slide.image) : []),
+  ].filter(Boolean);
+
+  await deleteDriveFilesForUrls({
+    userId: req.user._id,
+    urls: imageUrls,
+  });
   await item.deleteOne();
 
   res.status(200).json({
@@ -315,18 +328,32 @@ const updateHomepageSettings = asyncHandler(async (req, res) => {
 });
 
 const uploadImage = asyncHandler(async (req, res) => {
-  if (!req.file) {
+  const uploadedFile = req.file || req.files?.image?.[0] || req.files?.file?.[0];
+  if (!uploadedFile) {
     return res.status(400).json({
       success: false,
       message: 'No file uploaded',
     });
   }
-  const driveFile = await uploadRequestFileToGoogleDrive(req, { makePublic: true });
+  const driveFile = await uploadRequestFileToGoogleDrive(
+    { ...req, file: uploadedFile },
+    { makePublic: true }
+  );
   const url = driveFile.url;
+  const settings = await mongoose.model('HomepageSetting').getSettings();
+  settings.heroSectionBgImage = url;
+  await settings.save();
+  console.log('[Homepage Image Upload] Uploaded image', {
+    fileId: driveFile.id,
+    url,
+    originalName: uploadedFile.originalname,
+    savedField: 'heroSectionBgImage',
+  });
   res.status(200).json({
     success: true,
     message: 'Image uploaded successfully',
     url,
+    data: settings,
   });
 });
 
@@ -337,6 +364,8 @@ const uploadImage = asyncHandler(async (req, res) => {
 //   - image: optional File (the new background image)
 const TABS_WITH_IMAGE = {
   hero: 'heroSectionBgImage',
+  // Header image uploads use the existing homepage hero background field.
+  header: 'heroSectionBgImage',
 };
 
 const updateHomepageTabWithUpload = asyncHandler(async (req, res) => {
@@ -377,10 +406,20 @@ const updateHomepageTabWithUpload = asyncHandler(async (req, res) => {
   // If a new file is uploaded AND this tab has an image slot, replace the path.
   // We only replace when a file is actually present so that callers updating only
   // text fields don't accidentally blank out the existing image.
-  if (req.file && TABS_WITH_IMAGE[tab]) {
+  const uploadedFile = req.file || req.files?.image?.[0] || req.files?.file?.[0];
+  if (uploadedFile && TABS_WITH_IMAGE[tab]) {
     const imageField = TABS_WITH_IMAGE[tab];
-    const driveFile = await uploadRequestFileToGoogleDrive(req, { makePublic: true });
+    const driveFile = await uploadRequestFileToGoogleDrive(
+      { ...req, file: uploadedFile },
+      { makePublic: true }
+    );
     settings[imageField] = driveFile.url;
+    console.log('[Homepage Settings] Saved uploaded image', {
+      tab,
+      imageField,
+      fileId: driveFile.id,
+      url: driveFile.url,
+    });
   }
 
   await settings.save();

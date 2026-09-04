@@ -52,12 +52,28 @@ router.route('/homepage/settings')
   .put(protect, admin, updateHomepageSettings);
 
 router.route('/homepage/upload')
-  .post(protect, admin, upload.single('file'), uploadImage);
+  .post(
+    protect,
+    admin,
+    upload.fields([
+      { name: 'file', maxCount: 1 },
+      { name: 'image', maxCount: 1 },
+    ]),
+    uploadImage
+  );
 
 router.route('/homepage/settings/updateTab')
   .put(protect, admin, updateHomepageTab);
 
 router.route('/homepage/settings/updateTabWithUpload')
-  .put(protect, admin, upload.single('image'), updateHomepageTabWithUpload);
+  .put(
+    protect,
+    admin,
+    upload.fields([
+      { name: 'image', maxCount: 1 },
+      { name: 'file', maxCount: 1 },
+    ]),
+    updateHomepageTabWithUpload
+  );
 
 module.exports = router;
