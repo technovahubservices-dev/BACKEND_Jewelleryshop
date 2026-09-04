@@ -418,10 +418,12 @@ const updateHomepageSettings = asyncHandler(async (req, res) => {
     { new: true, runValidators: true }
   );
 
+  const plainUpdated = typeof updated?.toObject === 'function' ? updated.toObject() : updated;
+
   res.status(200).json({
     success: true,
     message: 'Homepage settings updated successfully',
-    data: updated,
+    data: normalizeHomepageImageUrls(plainUpdated),
   });
 });
 
@@ -454,7 +456,7 @@ const uploadImage = asyncHandler(async (req, res) => {
     success: true,
     message: 'Image uploaded successfully',
     url,
-    data: updated,
+    data: normalizeHomepageImageUrls(typeof updated?.toObject === 'function' ? updated.toObject() : updated),
   });
 });
 
@@ -532,10 +534,13 @@ const updateHomepageTabWithUpload = asyncHandler(async (req, res) => {
     { new: true, runValidators: true }
   );
 
+  const plainUpdated = typeof updated?.toObject === 'function' ? updated.toObject() : updated;
+
   res.status(200).json({
     success: true,
     message: `Tab "${tab}" updated successfully`,
-    data: updated,
+    url: plainUpdated[TABS_WITH_IMAGE[tab]] || plainUpdated.heroSectionBgImage || null,
+    data: normalizeHomepageImageUrls(plainUpdated),
   });
 });
 
@@ -567,10 +572,12 @@ const updateHomepageTab = asyncHandler(async (req, res) => {
     { new: true, runValidators: true }
   );
 
+  const plainUpdated = typeof updated?.toObject === 'function' ? updated.toObject() : updated;
+
   res.status(200).json({
     success: true,
     message: `Tab "${tab}" updated successfully`,
-    data: updated,
+    data: normalizeHomepageImageUrls(plainUpdated),
   });
 });
 

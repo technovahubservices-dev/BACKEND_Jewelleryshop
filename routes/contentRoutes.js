@@ -25,28 +25,6 @@ const CMS_IMAGE_FIELDS = [
 
 const contentImageMiddleware = uploadImageMemory.fields(CMS_IMAGE_FIELDS);
 
-router.use((err, req, res, next) => {
-  if (err && err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({
-      success: false,
-      message: 'Uploaded image is too large. Maximum size is 10MB.',
-    });
-  }
-  if (err && err.code === 'LIMIT_FILE_COUNT') {
-    return res.status(400).json({
-      success: false,
-      message: 'Too many image files uploaded.',
-    });
-  }
-  if (err && err instanceof Error) {
-    return res.status(400).json({
-      success: false,
-      message: err.message || 'Invalid image upload.',
-    });
-  }
-  next(err);
-});
-
 const CONTENT_TYPES = [
   'heroBanners',
   'featuredProducts',
@@ -98,5 +76,31 @@ router.route('/homepage/settings/updateTabWithUpload')
     contentImageMiddleware,
     updateHomepageTabWithUpload
   );
+
+// Multer upload error handler — MUST be registered after the routes so it can
+// actually intercept multer errors thrown by the inline `contentImageMiddleware`.
+// Without this placement, upload failures (oversized file, wrong file type)
+// would bubble to the global error handler as a 500 with no useful context.
+router.use((err, req, res, next) => {
+  if (err && err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({
+      success: false,
+      message: 'Uploaded image is too large. Maximum size is 10MB.',
+    });
+  }
+  if (err && err.code === 'LIMIT_FILE_COUNT') {
+    return res.status(400).json({
+      success: false,
+      message: 'Too many image files uploaded.',
+    });
+  }
+  if (err && err instanceof Error && err.message) {
+    return res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
+  next(err);
+});
 
 module.exports = router;
