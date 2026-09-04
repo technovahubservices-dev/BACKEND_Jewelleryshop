@@ -1,6 +1,52 @@
 const Product = require('../models/Product');
-const path = require('path');
 const { uploadRequestFilesToGoogleDrive } = require('../utils/googleDriveStorage');
+
+const normalizeGoogleDriveUrl = (url) => {
+  if (!url || typeof url !== 'string') {
+    return url;
+  }
+
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+
+    if (!host.includes('drive.google.com')) {
+      return url;
+    }
+
+    const fileIdFromQuery = parsed.searchParams.get('id');
+    const fileIdFromPath = parsed.pathname.match(/\/file\/d\/([^/]+)/)?.[1];
+    const fileId = fileIdFromQuery || fileIdFromPath;
+
+    if (!fileId) {
+      return url;
+    }
+
+    return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(fileId)}`;
+  } catch (error) {
+    return url;
+  }
+};
+
+const normalizeProductImages = (product) => {
+  const plainProduct = typeof product?.toObject === 'function'
+    ? product.toObject()
+    : { ...product };
+
+  if (!plainProduct) {
+    return plainProduct;
+  }
+
+  if (Array.isArray(plainProduct.images)) {
+    plainProduct.images = plainProduct.images.map(normalizeGoogleDriveUrl);
+  }
+
+  if (plainProduct.primaryImage) {
+    plainProduct.primaryImage = normalizeGoogleDriveUrl(plainProduct.primaryImage);
+  }
+
+  return plainProduct;
+};
 
 const generateSKU = (name, category, metal) => {
   const metalMap = {
@@ -90,11 +136,8 @@ exports.createProduct = async (req, res) => {
     const driveFiles = await uploadRequestFilesToGoogleDrive(req, { makePublic: true });
     const uploadedFiles = driveFiles.map((file) => file.url);
 
-    if (uploadedFiles.length > 0) {
-      const invalidUpload = uploadedFiles.some((f) => {
-        const ext = path.extname(f).toLowerCase();
-        return !/\.(jpg|jpeg|png|webp|gif)$/.test(ext);
-      });
+    if (req.files && req.files.length > 0) {
+      const invalidUpload = req.files.some((file) => !String(file.mimetype || '').startsWith('image/'));
       if (invalidUpload) {
         return res.status(400).json({
           success: false,
@@ -197,10 +240,12 @@ exports.createProduct = async (req, res) => {
 
     const product = await Product.create(productData);
 
+    const responseProduct = normalizeProductImages(product);
+
     res.status(201).json({
       success: true,
       message: 'Product created successfully',
-      data: product,
+      data: responseProduct,
     });
   } catch (error) {
     console.error('Create product error:', error);
@@ -264,16 +309,17 @@ exports.getProducts = async (req, res) => {
     productsQuery = productsQuery.skip(skip).limit(parseInt(limit, 10));
 
     const products = await productsQuery.exec();
+    const normalizedProducts = products.map(normalizeProductImages);
 
     const total = await Product.countDocuments(query);
 
     res.status(200).json({
       success: true,
-      count: products.length,
+      count: normalizedProducts.length,
       total,
       page: parseInt(page, 10),
       pages: Math.ceil(total / parseInt(limit, 10)),
-      data: products,
+      data: normalizedProducts,
     });
   } catch (error) {
     console.error('Get products error:', error);
@@ -297,7 +343,7 @@ exports.getProduct = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: product,
+      data: normalizeProductImages(product),
     });
   } catch (error) {
     console.error('Get product error:', error);
@@ -445,11 +491,12 @@ exports.updateProduct = async (req, res) => {
       isNewArrival === true || isNewArrival === 'true' || isNewArrival === 1;
 
     await product.save();
+    const responseProduct = normalizeProductImages(product);
 
     res.status(200).json({
       success: true,
       message: 'Product updated successfully',
-      data: product,
+      data: responseProduct,
     });
   } catch (error) {
     console.error('Update product error:', error);
