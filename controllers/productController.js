@@ -1,5 +1,8 @@
 const Product = require('../models/Product');
-const { uploadRequestFilesToGoogleDrive } = require('../utils/googleDriveStorage');
+const {
+  deleteDriveFilesForUrls,
+  uploadRequestFilesToGoogleDrive,
+} = require('../utils/googleDriveStorage');
 
 const normalizeGoogleDriveUrl = (url) => {
   if (!url || typeof url !== 'string') {
@@ -595,6 +598,10 @@ exports.deleteProduct = async (req, res) => {
       });
     }
 
+    await deleteDriveFilesForUrls({
+      userId: req.user._id,
+      urls: product.images || [],
+    });
     await product.deleteOne();
 
     res.status(200).json({

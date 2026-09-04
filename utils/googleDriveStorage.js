@@ -24,6 +24,21 @@ const driveError = (message) => {
   return error;
 };
 
+const getGoogleDriveFileId = (url) => {
+  if (!url || typeof url !== 'string') return null;
+
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.toLowerCase().includes('drive.google.com')) return null;
+
+    return parsed.searchParams.get('id')
+      || parsed.pathname.match(/\/file\/d\/([^/]+)/)?.[1]
+      || null;
+  } catch (error) {
+    return null;
+  }
+};
+
 const getAccessToken = async (userId, { forceRefresh = false } = {}) => {
   const connection = await GoogleDriveConnection.findOne({ user: userId });
 
@@ -220,7 +235,54 @@ const uploadRequestFileToGoogleDrive = async (req, { makePublic = false } = {}) 
   });
 };
 
+const deleteFileFromGoogleDrive = async ({ userId, fileId }) => {
+  if (!fileId) return;
+
+  const response = await requestDrive(userId, {
+    url: `${GOOGLE_FILES_ENDPOINT}/${encodeURIComponent(fileId)}`,
+    method: 'DELETE',
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (error) {
+    data = null;
+  }
+
+  if (response.status === 404) {
+    console.warn('[Google Drive Delete] File was already missing', { fileId });
+    return;
+  }
+
+  if (!response.ok) {
+    const message = data?.error?.message || 'Unable to delete file from Google Drive';
+    console.error('[Google Drive Delete] API error', {
+      fileId,
+      status: response.status,
+      error: data?.error || data,
+    });
+    throw driveError(message);
+  }
+
+  console.log('[Google Drive Delete] File deleted', {
+    fileId,
+    status: response.status,
+  });
+};
+
+const deleteDriveFilesForUrls = async ({ userId, urls = [] }) => {
+  const fileIds = [...new Set(urls.map(getGoogleDriveFileId).filter(Boolean))];
+
+  for (const fileId of fileIds) {
+    await deleteFileFromGoogleDrive({ userId, fileId });
+  }
+};
+
 module.exports = {
+  deleteDriveFilesForUrls,
+  deleteFileFromGoogleDrive,
+  getGoogleDriveFileId,
   uploadFileToGoogleDrive,
   uploadRequestFileToGoogleDrive,
   uploadRequestFilesToGoogleDrive,
