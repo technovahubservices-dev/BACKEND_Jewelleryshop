@@ -233,43 +233,39 @@ exports.convertQuotationToOrder = asyncHandler(async (req, res) => {
   for (const item of quotation.items) {
     const product = item.product ? await Product.findById(item.product) : null;
 
-    if (product) {
-      if (product.stock < item.quantity) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient stock for ${product.name}. Available: ${product.stock}, Requested: ${item.quantity}`,
-        });
-      }
+    const qty = Math.max(1, Number(item.qty) || Number(item.quantity) || 1);
+
+    if (product && product.stock < qty) {
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient stock for ${product.name}. Available: ${product.stock}, Requested: ${qty}`,
+      });
     }
 
-    const metalRate = Number(item.metalRate) || 0;
-    const netWeight = Number(item.netWeight) || 0;
-    const makingCharges = Number(item.makingCharges) || 0;
-    const wastage = Number(item.wastage) || 0;
-    const stoneCharges = Number(item.stoneCharges) || 0;
-    const quantity = Number(item.quantity) || 1;
-    const discount = Number(item.discount) || 0;
-    const gst = Number(item.gst) || 0;
+    const price = Number(item.price) || (product ? product.price : 0);
+    const discount = Number(item.discount) || 0; // percent
+    const gst = Number(item.gst) || 0;           // percent
 
-    const metalValue = metalRate * netWeight;
-    const lineSubtotal = metalValue + makingCharges + wastage + stoneCharges;
-    const taxableAmount = Math.max(0, lineSubtotal - discount);
+    const gross = price * qty;
+    const discountAmount = gross * (discount / 100);
+    const taxableAmount = Math.max(0, gross - discountAmount);
     const gstAmount = taxableAmount * (gst / 100);
+    const lineTotal = taxableAmount + gstAmount;
 
-    subtotal += lineSubtotal;
-    totalDiscount += discount;
+    subtotal += lineTotal;
+    totalDiscount += discountAmount;
     totalGst += gstAmount;
 
     orderItems.push({
       product: item.product || null,
-      name: item.name,
+      name: item.productName || item.name || (product ? product.name : ''),
       image: item.image || product?.primaryImage || (product?.images && product.images[0]) || '',
-      price: taxableAmount,
-      quantity,
+      price,
+      quantity: qty,
     });
   }
 
-  const itemsPrice = subtotal - totalDiscount;
+  const itemsPrice = subtotal;
   const taxPrice = totalGst;
   const shippingPrice = 0;
   const totalPrice = itemsPrice + taxPrice + shippingPrice;

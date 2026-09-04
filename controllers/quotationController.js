@@ -16,29 +16,19 @@ const STATUS_TRANSITIONS = {
 // Canonical line calculation. Mirrors the React Summary panel so that the
 // value the user sees on screen matches the value persisted in MongoDB.
 //
+// - qty: integer count
 // - price: rupee price per unit
-// - quantity: integer count
-// - discount: percent (0-100). If a value is clearly an absolute rupee amount
-//   (e.g. 5000) we still treat it as percent for consistency with the UI.
+// - discount: percent (0-100)
 // - gst: percent
-// - Falls back to a jewellery-style metal calculation if price is 0 but
-//   metalRate * netWeight > 0 (manual quotation entry).
 const computeLineTotal = (item) => {
-  const qty = Number(item.quantity) || 0;
-  const price = Number(item.price) || 0;
+  const qty = Math.max(0, Number(item.qty) || Number(item.quantity) || 0);
+  const price = Math.max(0, Number(item.price) || 0);
   const discountPercent = Number(item.discount) || 0;
   const gstPercent = Number(item.gst) || 0;
-  const metalRate = Number(item.metalRate) || 0;
-  const netWeight = Number(item.netWeight) || 0;
-  const makingCharges = Number(item.makingCharges) || 0;
-  const wastage = Number(item.wastage) || 0;
-  const stoneCharges = Number(item.stoneCharges) || 0;
 
-  const basePriceTotal = price > 0
-    ? qty * price
-    : qty * (metalRate * netWeight) + makingCharges + wastage + stoneCharges;
-  const discountAmount = basePriceTotal * (discountPercent / 100);
-  const taxableValue = Math.max(0, basePriceTotal - discountAmount);
+  const gross = qty * price;
+  const discountAmount = gross * (discountPercent / 100);
+  const taxableValue = Math.max(0, gross - discountAmount);
   const gstAmount = taxableValue * (gstPercent / 100);
   return taxableValue + gstAmount;
 };
@@ -61,6 +51,9 @@ const normalizeQuotationItem = (raw, index = 0) => {
     return Number.isFinite(n) ? n : fallback;
   };
 
+  const productName = String(raw.productName || raw.name || `Item ${index + 1}`).trim();
+  if (!productName) return null;
+
   const productRef = raw.product || raw.productId || null;
   const productId = (productRef && /^[0-9a-fA-F]{24}$/.test(String(productRef)))
     ? String(productRef)
@@ -68,21 +61,10 @@ const normalizeQuotationItem = (raw, index = 0) => {
 
   return {
     product: productId,
-    name: String(raw.name || `Item ${index + 1}`).trim(),
+    productName,
     sku: String(raw.sku || '').trim(),
-    hsn: String(raw.hsn || '').trim(),
-    metal: String(raw.metal || '').trim(),
-    purity: String(raw.purity || '').trim(),
-    grossWeight: String(raw.grossWeight || '').trim(),
-    netWeight: String(raw.netWeight || '').trim(),
-    stoneWeight: String(raw.stoneWeight || '').trim(),
-    stoneType: String(raw.stoneType || '').trim(),
-    metalRate: num(raw.metalRate, 0),
-    makingCharges: num(raw.makingCharges, 0),
-    wastage: num(raw.wastage, 0),
-    stoneCharges: num(raw.stoneCharges, 0),
+    qty: num(raw.qty ?? raw.quantity, 1) || 1,
     price: num(raw.price, 0),
-    quantity: num(raw.quantity, 1) || 1,
     discount: num(raw.discount, 0),
     gst: num(raw.gst, 18),
   };
@@ -146,7 +128,8 @@ exports.createQuotation = asyncHandler(async (req, res) => {
 
   const normalizedItems = items
     .map((item, idx) => normalizeQuotationItem(item, idx))
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((item) => ({ ...item, lineTotal: computeLineTotal(item) }));
 
   if (normalizedItems.length === 0) {
     return res.status(400).json({
@@ -284,7 +267,8 @@ exports.updateQuotation = asyncHandler(async (req, res) => {
   if (items) {
     const normalizedItems = items
       .map((item, idx) => normalizeQuotationItem(item, idx))
-      .filter(Boolean);
+      .filter(Boolean)
+      .map((item) => ({ ...item, lineTotal: computeLineTotal(item) }));
     quotation.items = normalizedItems;
     quotation.totalAmount = computeQuotationTotal(normalizedItems);
   }

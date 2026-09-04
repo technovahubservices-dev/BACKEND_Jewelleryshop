@@ -70,6 +70,19 @@ const normalizeHomepageImageUrls = (data) => {
   return result;
 };
 
+const normalizeContentItemImageUrls = (data) => {
+  const result = { ...data };
+
+  const contentImageFields = ['image', 'mobileImage'];
+  for (const field of contentImageFields) {
+    if (typeof result[field] === 'string') {
+      result[field] = normalizeGoogleDriveUrl(result[field]);
+    }
+  }
+
+  return result;
+};
+
 const getAll = (modelKey) => asyncHandler(async (req, res) => {
   const Model = contentModels[modelKey];
   const { search, isActive, sort = '-createdAt', page = 1, limit = 50 } = req.query;
@@ -94,13 +107,18 @@ const getAll = (modelKey) => asyncHandler(async (req, res) => {
 
   const total = await Model.countDocuments(query);
 
+  const normalizedItems = items.map((item) => {
+    const plain = typeof item?.toObject === 'function' ? item.toObject() : item;
+    return normalizeContentItemImageUrls(plain);
+  });
+
   res.status(200).json({
     success: true,
     count: items.length,
     total,
     page: parseInt(page, 10),
     pages: Math.ceil(total / parseInt(limit, 10)),
-    data: items,
+    data: normalizedItems,
   });
 });
 
@@ -138,10 +156,15 @@ const getActive = (modelKey) => asyncHandler(async (req, res) => {
     .sort('sortOrder createdAt')
     .limit(parseInt(limit, 10));
 
+  const normalizedItems = items.map((item) => {
+    const plain = typeof item?.toObject === 'function' ? item.toObject() : item;
+    return normalizeContentItemImageUrls(plain);
+  });
+
   res.status(200).json({
     success: true,
     count: items.length,
-    data: items,
+    data: normalizedItems,
   });
 });
 
@@ -165,9 +188,11 @@ const getById = (modelKey) => asyncHandler(async (req, res) => {
     });
   }
 
+  const plainItem = typeof item?.toObject === 'function' ? item.toObject() : item;
+
   res.status(200).json({
     success: true,
-    data: item,
+    data: normalizeContentItemImageUrls(plainItem),
   });
 });
 
@@ -180,12 +205,14 @@ const create = (modelKey) => asyncHandler(async (req, res) => {
     body.image = driveFile.url;
   }
 
-  if (body.sortOrder === undefined || body.sortOrder === null || body.sortOrder === '') {
+  const normalizedBody = normalizeContentItemImageUrls(body);
+
+  if (normalizedBody.sortOrder === undefined || normalizedBody.sortOrder === null || normalizedBody.sortOrder === '') {
     const maxOrder = await Model.findOne({}).sort('-sortOrder');
-    body.sortOrder = maxOrder ? maxOrder.sortOrder + 1 : 0;
+    normalizedBody.sortOrder = maxOrder ? maxOrder.sortOrder + 1 : 0;
   }
 
-  const item = await Model.create(body);
+  const item = await Model.create(normalizedBody);
 
   res.status(201).json({
     success: true,
@@ -202,6 +229,8 @@ const update = (modelKey) => asyncHandler(async (req, res) => {
     const driveFile = await uploadRequestFileToGoogleDrive(req, { makePublic: true });
     body.image = driveFile.url;
   }
+
+  const normalizedBody = normalizeContentItemImageUrls(body);
 
   let item;
   try {
@@ -220,23 +249,25 @@ const update = (modelKey) => asyncHandler(async (req, res) => {
     });
   }
 
-  Object.keys(body).forEach((key) => {
+  Object.keys(normalizedBody).forEach((key) => {
     if (key === '_id' || key === '__v' || key === 'createdAt' || key === 'updatedAt') return;
-    if (body[key] !== undefined && body[key] !== null) {
-      item[key] = body[key];
+    if (normalizedBody[key] !== undefined && normalizedBody[key] !== null) {
+      item[key] = normalizedBody[key];
     }
   });
 
-  if (body.isActive !== undefined) {
-    item.isActive = body.isActive === true || body.isActive === 'true';
+  if (normalizedBody.isActive !== undefined) {
+    item.isActive = normalizedBody.isActive === true || normalizedBody.isActive === 'true';
   }
 
-  await item.save();
+  const updated = await item.save();
+
+  const plainUpdated = typeof updated?.toObject === 'function' ? updated.toObject() : updated;
 
   res.status(200).json({
     success: true,
     message: `${CONTENT_TYPES[modelKey] || 'Item'} updated successfully`,
-    data: item,
+    data: normalizeContentItemImageUrls(plainUpdated),
   });
 });
 
@@ -333,18 +364,21 @@ const toggleActive = (modelKey) => asyncHandler(async (req, res) => {
   item.isActive = !item.isActive;
   await item.save();
 
+  const plainItem = typeof item?.toObject === 'function' ? item.toObject() : item;
+
   res.status(200).json({
     success: true,
     message: `Status updated: ${item.isActive ? 'Active' : 'Inactive'}`,
-    data: item,
+    data: normalizeContentItemImageUrls(plainItem),
   });
 });
 
 const getHomepageSettings = asyncHandler(async (req, res) => {
   const settings = await mongoose.model('HomepageSetting').getSettings();
+  const plain = typeof settings?.toObject === 'function' ? settings.toObject() : settings;
   res.status(200).json({
     success: true,
-    data: settings,
+    data: normalizeHomepageImageUrls(plain),
   });
 });
 

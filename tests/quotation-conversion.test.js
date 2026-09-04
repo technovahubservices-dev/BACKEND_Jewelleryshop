@@ -46,20 +46,11 @@ describe('Quotation Conversion to Order', () => {
     validUntil: new Date(Date.now() + 86400000 * 30).toISOString().split('T')[0],
     items: [
       {
-        productId: '',
-        name: 'Gold Ring',
+        product: productId || '',
+        productName: 'Gold Ring',
         sku: 'GOLD-RNG-001',
-        metal: 'Gold',
-        purity: '22K',
-        grossWeight: '3.2',
-        netWeight: '3.0',
-        stoneWeight: '0.15',
-        stoneType: 'Round',
-        metalRate: 8500,
-        makingCharges: 3500,
-        wastage: 1200,
-        stoneCharges: 8000,
-        quantity: 2,
+        qty: 2,
+        price: 25000,
         discount: 0,
         gst: 18,
       },
@@ -145,7 +136,7 @@ describe('Quotation Conversion to Order', () => {
     expect(res.body.message).toMatch(/already been converted/);
   });
 
-  it('should reject conversion with insufficient stock', async () => {
+      it('should reject conversion with insufficient stock', async () => {
     const quoteRes = await request(app)
       .post('/api/quotations')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -155,7 +146,7 @@ describe('Quotation Conversion to Order', () => {
         items: [
           {
             ...quotationData.items[0],
-            quantity: 100,
+            qty: 100,
           },
         ],
       });
