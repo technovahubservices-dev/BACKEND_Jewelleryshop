@@ -8,6 +8,20 @@ const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const GOOGLE_UPLOAD_ENDPOINT = 'https://www.googleapis.com/upload/drive/v3/files';
 const GOOGLE_FILES_ENDPOINT = 'https://www.googleapis.com/drive/v3/files';
 
+const buildPublicDriveImageUrl = ({ id, webContentLink }) => {
+  if (webContentLink) {
+    return webContentLink;
+  }
+
+  if (!id) {
+    return '';
+  }
+
+  // Use a direct binary download URL instead of the preview/view endpoint.
+  // The view endpoint often returns an HTML interstitial that is unreliable for <img>.
+  return `https://drive.google.com/uc?export=download&id=${encodeURIComponent(id)}`;
+};
+
 const driveError = (message) => {
   const error = new Error(message);
   error.statusCode = 400;
@@ -84,6 +98,15 @@ const uploadFileToGoogleDrive = async ({ userId, filePath, originalName, mimeTyp
   }
 
   const name = `${Date.now()}-${path.basename(originalName || path.basename(filePath))}`;
+  console.log('[Google Drive Upload] Preparing file upload', {
+    userId: String(userId),
+    filePath,
+    originalName,
+    mimeType,
+    name,
+    makePublic,
+  });
+
   const metadata = {
     name,
     ...(process.env.GOOGLE_DRIVE_FOLDER_ID
@@ -102,6 +125,15 @@ const uploadFileToGoogleDrive = async ({ userId, filePath, originalName, mimeTyp
   });
   const data = await response.json();
 
+  console.log('[Google Drive Upload] Upload response', {
+    ok: response.ok,
+    status: response.status,
+    id: data?.id || null,
+    name: data?.name || null,
+    mimeType: data?.mimeType || null,
+    error: data?.error?.message || null,
+  });
+
   if (!response.ok || !data.id) {
     throw driveError(data.error?.message || 'Unable to upload file to Google Drive');
   }
@@ -114,18 +146,39 @@ const uploadFileToGoogleDrive = async ({ userId, filePath, originalName, mimeTyp
       body: JSON.stringify({ type: 'anyone', role: 'reader' }),
     });
 
+    let permissionData = null;
+    try {
+      permissionData = await permissionResponse.json();
+    } catch (error) {
+      permissionData = null;
+    }
+
+    console.log('[Google Drive Upload] Permission response', {
+      ok: permissionResponse.ok,
+      status: permissionResponse.status,
+      fileId: data.id,
+      response: permissionData,
+    });
+
     if (!permissionResponse.ok) {
       throw driveError('File uploaded, but Google Drive sharing could not be configured');
     }
   }
 
+  const url = makePublic
+    ? buildPublicDriveImageUrl({ id: data.id, webContentLink: data.webContentLink })
+    : data.webContentLink || data.webViewLink || `https://drive.google.com/file/d/${encodeURIComponent(data.id)}/view`;
+
+  console.log('[Google Drive Upload] Final image url', {
+    fileId: data.id,
+    url,
+  });
+
   return {
     id: data.id,
     name: data.name,
     mimeType: data.mimeType,
-    url: makePublic
-      ? `https://drive.google.com/uc?export=view&id=${encodeURIComponent(data.id)}`
-      : data.webViewLink || `https://drive.google.com/file/d/${encodeURIComponent(data.id)}/view`,
+    url,
   };
 };
 

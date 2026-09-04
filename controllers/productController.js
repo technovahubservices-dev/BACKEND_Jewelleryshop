@@ -22,7 +22,13 @@ const normalizeGoogleDriveUrl = (url) => {
       return url;
     }
 
-    return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(fileId)}`;
+    const exportMode = parsed.searchParams.get('export');
+    if (exportMode === 'download') {
+      return url;
+    }
+
+    // Preserve direct Drive binary URLs and only normalize legacy share links.
+    return `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`;
   } catch (error) {
     return url;
   }
@@ -92,6 +98,20 @@ const getNextSkuNumber = async (skuPrefix) => {
 
 exports.createProduct = async (req, res) => {
   try {
+    console.log('[Product Create] Incoming multipart payload', {
+      bodyKeys: Object.keys(req.body || {}),
+      fileCount: Array.isArray(req.files) ? req.files.length : 0,
+      files: Array.isArray(req.files)
+        ? req.files.map((file) => ({
+            fieldname: file.fieldname,
+            originalname: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            path: file.path,
+          }))
+        : [],
+    });
+
     const {
       name,
       sku: manualSku,
@@ -135,6 +155,10 @@ exports.createProduct = async (req, res) => {
 
     const driveFiles = await uploadRequestFilesToGoogleDrive(req, { makePublic: true });
     const uploadedFiles = driveFiles.map((file) => file.url);
+    console.log('[Product Create] Drive upload result', {
+      uploadedCount: driveFiles.length,
+      uploadedFiles,
+    });
 
     if (req.files && req.files.length > 0) {
       const invalidUpload = req.files.some((file) => !String(file.mimetype || '').startsWith('image/'));
@@ -241,6 +265,11 @@ exports.createProduct = async (req, res) => {
     const product = await Product.create(productData);
 
     const responseProduct = normalizeProductImages(product);
+    console.log('[Product Create] Saved product image urls', {
+      productId: responseProduct._id,
+      images: responseProduct.images,
+      primaryImage: responseProduct.primaryImage,
+    });
 
     res.status(201).json({
       success: true,
@@ -260,6 +289,12 @@ exports.createProduct = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'A product with this SKU already exists',
+      });
+    }
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
       });
     }
     res.status(500).json({
@@ -362,6 +397,21 @@ exports.getProduct = async (req, res) => {
 
 exports.updateProduct = async (req, res) => {
   try {
+    console.log('[Product Update] Incoming multipart payload', {
+      productId: req.params.id,
+      bodyKeys: Object.keys(req.body || {}),
+      fileCount: Array.isArray(req.files) ? req.files.length : 0,
+      files: Array.isArray(req.files)
+        ? req.files.map((file) => ({
+            fieldname: file.fieldname,
+            originalname: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            path: file.path,
+          }))
+        : [],
+    });
+
     const {
       name,
       sku: manualSku,
@@ -414,6 +464,11 @@ exports.updateProduct = async (req, res) => {
 
     const driveFiles = await uploadRequestFilesToGoogleDrive(req, { makePublic: true });
     const uploadedFiles = driveFiles.map((file) => file.url);
+    console.log('[Product Update] Drive upload result', {
+      productId: req.params.id,
+      uploadedCount: driveFiles.length,
+      uploadedFiles,
+    });
 
     let newImageUrls = [];
     if (req.body.imageUrls !== undefined) {
@@ -492,6 +547,11 @@ exports.updateProduct = async (req, res) => {
 
     await product.save();
     const responseProduct = normalizeProductImages(product);
+    console.log('[Product Update] Saved product image urls', {
+      productId: responseProduct._id,
+      images: responseProduct.images,
+      primaryImage: responseProduct.primaryImage,
+    });
 
     res.status(200).json({
       success: true,
@@ -511,6 +571,12 @@ exports.updateProduct = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'A product with this SKU already exists',
+      });
+    }
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
       });
     }
     res.status(500).json({
