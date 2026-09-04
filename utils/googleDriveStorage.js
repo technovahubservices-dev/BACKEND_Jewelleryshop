@@ -13,7 +13,9 @@ const buildPublicDriveImageUrl = (id) => {
     return '';
   }
 
-  return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(id)}`;
+  // Drive's uc?export=view endpoint can return an HTML/interstitial response
+  // to browser image requests. The thumbnail endpoint returns image content.
+  return `https://drive.google.com/thumbnail?id=${encodeURIComponent(id)}&sz=w2000`;
 };
 
 const driveError = (message) => {

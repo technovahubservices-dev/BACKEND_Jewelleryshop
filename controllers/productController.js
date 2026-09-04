@@ -22,12 +22,11 @@ const normalizeGoogleDriveUrl = (url) => {
       return url;
     }
 
-    const exportMode = parsed.searchParams.get('export');
-    if (exportMode === 'view') {
+    if (parsed.pathname === '/thumbnail') {
       return url;
     }
 
-    return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(fileId)}`;
+    return `https://drive.google.com/thumbnail?id=${encodeURIComponent(fileId)}&sz=w2000`;
   } catch (error) {
     return url;
   }
