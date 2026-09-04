@@ -3,6 +3,8 @@ const StoreSetting = require('../models/StoreSetting');
 
 const SUPPORTED_CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AED', 'JPY', 'CAD', 'AUD', 'SGD'];
 
+const ALLOWED_STORE_FIELDS = ['storeName', 'email', 'phone', 'currency'];
+
 const sanitizeSettings = (doc) => ({
   _id: doc._id,
   storeName: doc.storeName,
@@ -19,45 +21,49 @@ const getAdminSettings = asyncHandler(async (req, res) => {
 });
 
 const updateAdminSettings = asyncHandler(async (req, res) => {
-  const { storeName, email, phone, currency } = req.body;
+  const updateData = {};
 
-  const settings = await StoreSetting.getSettings();
+  for (const field of ALLOWED_STORE_FIELDS) {
+    if (req.body[field] !== undefined && req.body[field] !== null) {
+      updateData[field] = req.body[field];
+    }
+  }
 
-  if (storeName !== undefined) {
-    const trimmed = String(storeName).trim();
+  if (updateData.storeName !== undefined) {
+    const trimmed = String(updateData.storeName).trim();
     if (!trimmed) {
       return res.status(400).json({ success: false, message: 'Store name cannot be empty' });
     }
     if (trimmed.length > 120) {
       return res.status(400).json({ success: false, message: 'Store name cannot exceed 120 characters' });
     }
-    settings.storeName = trimmed;
+    updateData.storeName = trimmed;
   }
 
-  if (email !== undefined) {
-    const trimmed = String(email).trim().toLowerCase();
+  if (updateData.email !== undefined) {
+    const trimmed = String(updateData.email).trim().toLowerCase();
     if (!trimmed) {
       return res.status(400).json({ success: false, message: 'Email cannot be empty' });
     }
     if (!/^\S+@\S+\.\S+$/.test(trimmed)) {
       return res.status(400).json({ success: false, message: 'Please provide a valid email' });
     }
-    settings.email = trimmed;
+    updateData.email = trimmed;
   }
 
-  if (phone !== undefined) {
-    const trimmed = String(phone).trim();
+  if (updateData.phone !== undefined) {
+    const trimmed = String(updateData.phone).trim();
     if (!trimmed) {
       return res.status(400).json({ success: false, message: 'Phone cannot be empty' });
     }
     if (trimmed.length > 30) {
       return res.status(400).json({ success: false, message: 'Phone cannot exceed 30 characters' });
     }
-    settings.phone = trimmed;
+    updateData.phone = trimmed;
   }
 
-  if (currency !== undefined) {
-    const trimmed = String(currency).trim().toUpperCase();
+  if (updateData.currency !== undefined) {
+    const trimmed = String(updateData.currency).trim().toUpperCase();
     if (!trimmed) {
       return res.status(400).json({ success: false, message: 'Currency cannot be empty' });
     }
@@ -67,10 +73,30 @@ const updateAdminSettings = asyncHandler(async (req, res) => {
         message: `Currency must be one of: ${SUPPORTED_CURRENCIES.join(', ')}`,
       });
     }
-    settings.currency = trimmed;
+    updateData.currency = trimmed;
   }
 
-  const updated = await settings.save();
+  if (Object.keys(updateData).length === 0) {
+    const existing = await StoreSetting.getSettings();
+    return res.status(200).json({
+      success: true,
+      message: 'No store information to update',
+      data: sanitizeSettings(existing),
+    });
+  }
+
+  const updated = await StoreSetting.findOneAndUpdate(
+    {},
+    { $set: updateData },
+    { new: true, runValidators: true }
+  ).exec();
+
+  if (!updated) {
+    return res.status(404).json({
+      success: false,
+      message: 'Store settings not found',
+    });
+  }
 
   res.status(200).json({
     success: true,
@@ -83,4 +109,5 @@ module.exports = {
   getAdminSettings,
   updateAdminSettings,
   SUPPORTED_CURRENCIES,
+  ALLOWED_STORE_FIELDS,
 };
