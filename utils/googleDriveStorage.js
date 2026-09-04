@@ -8,18 +8,12 @@ const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const GOOGLE_UPLOAD_ENDPOINT = 'https://www.googleapis.com/upload/drive/v3/files';
 const GOOGLE_FILES_ENDPOINT = 'https://www.googleapis.com/drive/v3/files';
 
-const buildPublicDriveImageUrl = ({ id, webContentLink }) => {
-  if (webContentLink) {
-    return webContentLink;
-  }
-
+const buildPublicDriveImageUrl = (id) => {
   if (!id) {
     return '';
   }
 
-  // Use a direct binary download URL instead of the preview/view endpoint.
-  // The view endpoint often returns an HTML interstitial that is unreliable for <img>.
-  return `https://drive.google.com/uc?export=download&id=${encodeURIComponent(id)}`;
+  return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(id)}`;
 };
 
 const driveError = (message) => {
@@ -107,11 +101,12 @@ const uploadFileToGoogleDrive = async ({ userId, filePath, originalName, mimeTyp
     makePublic,
   });
 
+  if (!process.env.GOOGLE_DRIVE_FOLDER_ID) {
+    throw driveError('GOOGLE_DRIVE_FOLDER_ID is not configured');
+  }
   const metadata = {
     name,
-    ...(process.env.GOOGLE_DRIVE_FOLDER_ID
-      ? { parents: [process.env.GOOGLE_DRIVE_FOLDER_ID] }
-      : {}),
+    parents: [process.env.GOOGLE_DRIVE_FOLDER_ID],
   };
   const fileBuffer = await fs.promises.readFile(filePath);
   const form = new FormData();
@@ -119,7 +114,7 @@ const uploadFileToGoogleDrive = async ({ userId, filePath, originalName, mimeTyp
   form.append('file', new Blob([fileBuffer], { type: mimeType || 'application/octet-stream' }), name);
 
   const response = await requestDrive(userId, {
-    url: `${GOOGLE_UPLOAD_ENDPOINT}?uploadType=multipart&fields=id,name,mimeType,webViewLink,webContentLink`,
+    url: `${GOOGLE_UPLOAD_ENDPOINT}?uploadType=multipart&fields=id,name,mimeType,parents`,
     method: 'POST',
     body: form,
   });
@@ -161,13 +156,26 @@ const uploadFileToGoogleDrive = async ({ userId, filePath, originalName, mimeTyp
     });
 
     if (!permissionResponse.ok) {
-      throw driveError('File uploaded, but Google Drive sharing could not be configured');
+      const permissionError = permissionData?.error?.message || 'Unknown Google Drive permission error';
+      console.error('[Google Drive Upload] Permission creation failed', {
+        fileId: data.id,
+        status: permissionResponse.status,
+        error: permissionError,
+      });
+      throw driveError(`File uploaded, but Google Drive sharing failed: ${permissionError}`);
     }
   }
 
-  const url = makePublic
-    ? buildPublicDriveImageUrl({ id: data.id, webContentLink: data.webContentLink })
-    : data.webContentLink || data.webViewLink || `https://drive.google.com/file/d/${encodeURIComponent(data.id)}/view`;
+  if (!Array.isArray(data.parents) || !data.parents.includes(process.env.GOOGLE_DRIVE_FOLDER_ID)) {
+    console.error('[Google Drive Upload] File was not created in the configured folder', {
+      fileId: data.id,
+      expectedFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID,
+      actualParents: data.parents || [],
+    });
+    throw driveError('Google Drive uploaded the file to an unexpected folder');
+  }
+
+  const url = buildPublicDriveImageUrl(data.id);
 
   console.log('[Google Drive Upload] Final image url', {
     fileId: data.id,

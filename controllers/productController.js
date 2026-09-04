@@ -23,12 +23,11 @@ const normalizeGoogleDriveUrl = (url) => {
     }
 
     const exportMode = parsed.searchParams.get('export');
-    if (exportMode === 'download') {
+    if (exportMode === 'view') {
       return url;
     }
 
-    // Preserve direct Drive binary URLs and only normalize legacy share links.
-    return `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`;
+    return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(fileId)}`;
   } catch (error) {
     return url;
   }
