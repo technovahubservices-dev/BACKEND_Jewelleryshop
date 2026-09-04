@@ -29,13 +29,42 @@ const getGoogleDriveFileId = (url) => {
 
   try {
     const parsed = new URL(url);
-    if (!parsed.hostname.toLowerCase().includes('drive.google.com')) return null;
+    if (!parsed.hostname.toLowerCase().includes('google.com')) return null;
 
     return parsed.searchParams.get('id')
       || parsed.pathname.match(/\/file\/d\/([^/]+)/)?.[1]
       || null;
   } catch (error) {
     return null;
+  }
+};
+
+const normalizeGoogleDriveUrl = (url) => {
+  if (!url || typeof url !== 'string') {
+    return url;
+  }
+
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+
+    if (!host.includes('google.com')) {
+      return url;
+    }
+
+    const fileId = getGoogleDriveFileId(url);
+
+    if (!fileId) {
+      return url;
+    }
+
+    if (parsed.pathname === '/thumbnail') {
+      return url;
+    }
+
+    return `https://drive.google.com/thumbnail?id=${encodeURIComponent(fileId)}&sz=w2000`;
+  } catch (error) {
+    return url;
   }
 };
 
@@ -283,6 +312,7 @@ module.exports = {
   deleteDriveFilesForUrls,
   deleteFileFromGoogleDrive,
   getGoogleDriveFileId,
+  normalizeGoogleDriveUrl,
   uploadFileToGoogleDrive,
   uploadRequestFileToGoogleDrive,
   uploadRequestFilesToGoogleDrive,

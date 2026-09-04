@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const {
   deleteDriveFilesForUrls,
+  normalizeGoogleDriveUrl,
   uploadRequestFileToGoogleDrive,
 } = require('../utils/googleDriveStorage');
 
@@ -30,6 +31,43 @@ const CONTENT_TYPES = {
   promoBanners: 'Promo Banner',
   blogs: 'Blog',
   testimonials: 'Testimonial',
+};
+
+const HOMEPAGE_IMAGE_URL_FIELDS = [
+  'heroSectionBgImage',
+  'footerLogoUrl',
+];
+
+const HOMEPAGE_IMAGE_URL_ARRAY_FIELDS = [
+  { key: 'heroSlides', subKey: 'image' },
+  { key: 'homepageTestimonials', subKey: 'image' },
+  { key: 'categories', subKey: 'image' },
+  { key: 'videoReels', subKey: 'thumbnail' },
+  { key: 'festiveExclusiveImages', subKey: 'image' },
+  { key: 'heritageCollectionImages', subKey: 'image' },
+];
+
+const normalizeHomepageImageUrls = (data) => {
+  const result = { ...data };
+
+  for (const field of HOMEPAGE_IMAGE_URL_FIELDS) {
+    if (typeof result[field] === 'string') {
+      result[field] = normalizeGoogleDriveUrl(result[field]);
+    }
+  }
+
+  for (const { key, subKey } of HOMEPAGE_IMAGE_URL_ARRAY_FIELDS) {
+    if (Array.isArray(result[key])) {
+      result[key] = result[key].map((item) => {
+        if (item && typeof item === 'object' && typeof item[subKey] === 'string') {
+          return { ...item, [subKey]: normalizeGoogleDriveUrl(item[subKey]) };
+        }
+        return item;
+      });
+    }
+  }
+
+  return result;
 };
 
 const getAll = (modelKey) => asyncHandler(async (req, res) => {
@@ -312,18 +350,26 @@ const getHomepageSettings = asyncHandler(async (req, res) => {
 
 const updateHomepageSettings = asyncHandler(async (req, res) => {
   const settings = await mongoose.model('HomepageSetting').getSettings();
-  const updates = req.body;
+  const updates = normalizeHomepageImageUrls(req.body);
 
-  Object.keys(updates).forEach((key) => {
-    settings[key] = updates[key];
-  });
+  const safeUpdates = {};
+  for (const key of Object.keys(updates)) {
+    if (key === '_id' || key === '__v' || key === 'createdAt' || key === 'updatedAt') continue;
+    if (updates[key] !== undefined && updates[key] !== null) {
+      safeUpdates[key] = updates[key];
+    }
+  }
 
-  await settings.save();
+  const updated = await mongoose.model('HomepageSetting').findOneAndUpdate(
+    { _id: settings._id },
+    { $set: safeUpdates },
+    { new: true, runValidators: true }
+  );
 
   res.status(200).json({
     success: true,
     message: 'Homepage settings updated successfully',
-    data: settings,
+    data: updated,
   });
 });
 
@@ -341,8 +387,11 @@ const uploadImage = asyncHandler(async (req, res) => {
   );
   const url = driveFile.url;
   const settings = await mongoose.model('HomepageSetting').getSettings();
-  settings.heroSectionBgImage = url;
-  await settings.save();
+  const updated = await mongoose.model('HomepageSetting').findOneAndUpdate(
+    { _id: settings._id },
+    { $set: { heroSectionBgImage: url } },
+    { new: true, runValidators: true }
+  );
   console.log('[Homepage Image Upload] Uploaded image', {
     fileId: driveFile.id,
     url,
@@ -353,7 +402,7 @@ const uploadImage = asyncHandler(async (req, res) => {
     success: true,
     message: 'Image uploaded successfully',
     url,
-    data: settings,
+    data: updated,
   });
 });
 
@@ -399,13 +448,8 @@ const updateHomepageTabWithUpload = asyncHandler(async (req, res) => {
 
   const settings = await mongoose.model('HomepageSetting').getSettings();
 
-  Object.keys(payload).forEach((key) => {
-    settings[key] = payload[key];
-  });
+  const updates = normalizeHomepageImageUrls(payload);
 
-  // If a new file is uploaded AND this tab has an image slot, replace the path.
-  // We only replace when a file is actually present so that callers updating only
-  // text fields don't accidentally blank out the existing image.
   const uploadedFile = req.file || req.files?.image?.[0] || req.files?.file?.[0];
   if (uploadedFile && TABS_WITH_IMAGE[tab]) {
     const imageField = TABS_WITH_IMAGE[tab];
@@ -413,7 +457,7 @@ const updateHomepageTabWithUpload = asyncHandler(async (req, res) => {
       { ...req, file: uploadedFile },
       { makePublic: true }
     );
-    settings[imageField] = driveFile.url;
+    updates[imageField] = normalizeGoogleDriveUrl(driveFile.url);
     console.log('[Homepage Settings] Saved uploaded image', {
       tab,
       imageField,
@@ -422,12 +466,24 @@ const updateHomepageTabWithUpload = asyncHandler(async (req, res) => {
     });
   }
 
-  await settings.save();
+  const safeUpdates = {};
+  for (const key of Object.keys(updates)) {
+    if (key === '_id' || key === '__v' || key === 'createdAt' || key === 'updatedAt') continue;
+    if (updates[key] !== undefined && updates[key] !== null) {
+      safeUpdates[key] = updates[key];
+    }
+  }
+
+  const updated = await mongoose.model('HomepageSetting').findOneAndUpdate(
+    { _id: settings._id },
+    { $set: safeUpdates },
+    { new: true, runValidators: true }
+  );
 
   res.status(200).json({
     success: true,
     message: `Tab "${tab}" updated successfully`,
-    data: settings,
+    data: updated,
   });
 });
 
@@ -443,18 +499,26 @@ const updateHomepageTab = asyncHandler(async (req, res) => {
 
   const settings = await mongoose.model('HomepageSetting').getSettings();
 
-  if (payload && typeof payload === 'object') {
-    Object.keys(payload).forEach((key) => {
-      settings[key] = payload[key];
-    });
+  const updates = normalizeHomepageImageUrls(payload);
+
+  const safeUpdates = {};
+  for (const key of Object.keys(updates)) {
+    if (key === '_id' || key === '__v' || key === 'createdAt' || key === 'updatedAt') continue;
+    if (updates[key] !== undefined && updates[key] !== null) {
+      safeUpdates[key] = updates[key];
+    }
   }
 
-  await settings.save();
+  const updated = await mongoose.model('HomepageSetting').findOneAndUpdate(
+    { _id: settings._id },
+    { $set: safeUpdates },
+    { new: true, runValidators: true }
+  );
 
   res.status(200).json({
     success: true,
     message: `Tab "${tab}" updated successfully`,
-    data: settings,
+    data: updated,
   });
 });
 
