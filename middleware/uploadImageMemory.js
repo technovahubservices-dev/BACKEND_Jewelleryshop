@@ -2,22 +2,23 @@ const path = require('path');
 const multer = require('multer');
 
 const IMAGE_EXT_RE = /jpeg|jpg|png|webp|gif/;
+const VIDEO_EXT_RE = /mp4|mov|avi|webm|mpeg/;
 
 const storage = multer.memoryStorage();
 
-const imageFileFilter = (req, file, cb) => {
-  const ext = path.extname(file.originalname || '').toLowerCase();
-  if (IMAGE_EXT_RE.test(ext.replace('.', ''))) {
+const limits = {
+  fileSize: 25 * 1024 * 1024,
+};
+
+const mediaFileFilter = (req, file, cb) => {
+  const ext = path.extname(file.originalname || '').replace('.', '').toLowerCase();
+  if (IMAGE_EXT_RE.test(ext) || VIDEO_EXT_RE.test(ext)) {
     cb(null, true);
   } else {
-    cb(new Error('Only image files (jpeg, jpg, png, webp, gif) are allowed.'), false);
+    cb(new Error('Only image (jpeg, jpg, png, webp, gif) or video (mp4, mov, avi, webm) files are allowed.'), false);
   }
 };
 
-const limits = {
-  fileSize: 10 * 1024 * 1024,
-};
-
-const uploadImageMemory = multer({ storage, fileFilter: imageFileFilter, limits });
+const uploadImageMemory = multer({ storage, fileFilter: mediaFileFilter, limits });
 
 module.exports = uploadImageMemory;

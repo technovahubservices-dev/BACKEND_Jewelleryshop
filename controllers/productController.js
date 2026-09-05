@@ -1,39 +1,9 @@
 const Product = require('../models/Product');
 const {
   deleteDriveFilesForUrls,
+  normalizeGoogleDriveUrl,
   uploadRequestFilesToGoogleDrive,
 } = require('../utils/googleDriveStorage');
-
-const normalizeGoogleDriveUrl = (url) => {
-  if (!url || typeof url !== 'string') {
-    return url;
-  }
-
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.toLowerCase();
-
-    if (!host.includes('drive.google.com')) {
-      return url;
-    }
-
-    const fileIdFromQuery = parsed.searchParams.get('id');
-    const fileIdFromPath = parsed.pathname.match(/\/file\/d\/([^/]+)/)?.[1];
-    const fileId = fileIdFromQuery || fileIdFromPath;
-
-    if (!fileId) {
-      return url;
-    }
-
-    if (parsed.pathname === '/thumbnail') {
-      return url;
-    }
-
-    return `https://drive.google.com/thumbnail?id=${encodeURIComponent(fileId)}&sz=w2000`;
-  } catch (error) {
-    return url;
-  }
-};
 
 const normalizeProductImages = (product) => {
   const plainProduct = typeof product?.toObject === 'function'
@@ -155,7 +125,7 @@ exports.createProduct = async (req, res) => {
     }
 
     const driveFiles = await uploadRequestFilesToGoogleDrive(req, { makePublic: true });
-    const uploadedFiles = driveFiles.map((file) => file.url);
+    const uploadedFiles = driveFiles.map((file) => file.viewUrl || file.url);
     console.log('[Product Create] Drive upload result', {
       uploadedCount: driveFiles.length,
       uploadedFiles,
@@ -197,7 +167,8 @@ exports.createProduct = async (req, res) => {
       }
     }
 
-    const images = [...imageUrls, ...uploadedFiles];
+    const normalizedImageUrls = imageUrls.map(normalizeGoogleDriveUrl);
+    const images = [...normalizedImageUrls, ...uploadedFiles];
 
     if (images.length === 0) {
       return res.status(400).json({
@@ -463,8 +434,11 @@ exports.updateProduct = async (req, res) => {
       }
     }
 
+    const oldImageUrls = [...(product.images || [])];
+    const oldPrimaryImage = product.primaryImage || null;
+
     const driveFiles = await uploadRequestFilesToGoogleDrive(req, { makePublic: true });
-    const uploadedFiles = driveFiles.map((file) => file.url);
+    const uploadedFiles = driveFiles.map((file) => file.viewUrl || file.url);
     console.log('[Product Update] Drive upload result', {
       productId: req.params.id,
       uploadedCount: driveFiles.length,
@@ -488,10 +462,12 @@ exports.updateProduct = async (req, res) => {
       newImageUrls = [...(product.images || [])];
     }
 
-    let images = newImageUrls;
+    const normalizedNewImageUrls = newImageUrls.map(normalizeGoogleDriveUrl);
+    let images = normalizedNewImageUrls;
     if (uploadedFiles.length > 0) {
       images = [...images, ...uploadedFiles];
     }
+    images = images.map(normalizeGoogleDriveUrl);
 
     if (!images || images.length === 0) {
       return res.status(400).json({
@@ -534,6 +510,18 @@ exports.updateProduct = async (req, res) => {
     if (minimumStock !== undefined && minimumStock !== '') product.minimumStock = parseInt(minimumStock, 10);
     if (availableWeight !== undefined && availableWeight !== '') product.availableWeight = availableWeight;
     if (newImageUrls.length > 0 || uploadedFiles.length > 0) {
+      const imagesSet = new Set(images.map(normalizeGoogleDriveUrl));
+      const removableUrls = oldImageUrls.filter(
+        (url) => url && !imagesSet.has(normalizeGoogleDriveUrl(url))
+      );
+
+      if (removableUrls.length > 0) {
+        await deleteDriveFilesForUrls({
+          userId: req.user._id,
+          urls: removableUrls,
+        });
+      }
+
       product.images = images;
       product.primaryImage = images[0];
     }

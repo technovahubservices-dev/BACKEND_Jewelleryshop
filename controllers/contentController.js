@@ -38,6 +38,8 @@ const HOMEPAGE_IMAGE_URL_FIELDS = [
   'footerLogoUrl',
 ];
 
+// Fields that hold Google Drive image URLs. YouTube URLs and direct video URLs
+// in videoUrl are NOT normalized through the Drive normalizer — they are preserved as-is.
 const HOMEPAGE_IMAGE_URL_ARRAY_FIELDS = [
   { key: 'heroSlides', subKey: 'image' },
   { key: 'homepageTestimonials', subKey: 'image' },
@@ -47,8 +49,32 @@ const HOMEPAGE_IMAGE_URL_ARRAY_FIELDS = [
   { key: 'heritageCollectionImages', subKey: 'image' },
 ];
 
-const normalizeHomepageImageUrls = (data) => {
+// Homepage arrays that support explicit ordering via a sortOrder sub-field.
+const HOMEPAGE_SORTABLE_ARRAYS = [
+  'heroSlides',
+  'homepageTestimonials',
+  'categories',
+  'videoReels',
+  'festiveExclusiveImages',
+  'heritageCollectionImages',
+];
+
+const sortHomepageArrays = (data) => {
   const result = { ...data };
+
+  for (const key of HOMEPAGE_SORTABLE_ARRAYS) {
+    if (Array.isArray(result[key])) {
+      result[key] = [...result[key]].sort(
+        (a, b) => (a?.sortOrder ?? 0) - (b?.sortOrder ?? 0)
+      );
+    }
+  }
+
+  return result;
+};
+
+const normalizeHomepageImageUrls = (data) => {
+  let result = { ...data };
 
   for (const field of HOMEPAGE_IMAGE_URL_FIELDS) {
     if (typeof result[field] === 'string') {
@@ -66,6 +92,8 @@ const normalizeHomepageImageUrls = (data) => {
       });
     }
   }
+
+  result = sortHomepageArrays(result);
 
   return result;
 };
@@ -123,6 +151,7 @@ const getAll = (modelKey) => asyncHandler(async (req, res) => {
 });
 
 const getActive = (modelKey) => asyncHandler(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const Model = contentModels[modelKey];
   const { position, limit = 50 } = req.query;
 
@@ -212,7 +241,7 @@ const create = (modelKey) => asyncHandler(async (req, res) => {
       { ...req, file: uploadedFile },
       { makePublic: true }
     );
-    body.image = driveFile.url;
+    body.image = driveFile.viewUrl || driveFile.url;
   }
 
   const normalizedBody = normalizeContentItemImageUrls(body);
@@ -238,17 +267,6 @@ const update = (modelKey) => asyncHandler(async (req, res) => {
   const Model = contentModels[modelKey];
   const body = { ...req.body };
 
-  const uploadedFile = resolveUploadedImageFile(req);
-  if (uploadedFile) {
-    const driveFile = await uploadRequestFileToGoogleDrive(
-      { ...req, file: uploadedFile },
-      { makePublic: true }
-    );
-    body.image = driveFile.url;
-  }
-
-  const normalizedBody = normalizeContentItemImageUrls(body);
-
   let item;
   try {
     item = await Model.findById(req.params.id);
@@ -263,6 +281,40 @@ const update = (modelKey) => asyncHandler(async (req, res) => {
     return res.status(404).json({
       success: false,
       message: `${CONTENT_TYPES[modelKey] || 'Item'} not found`,
+    });
+  }
+
+  const oldImageUrls = [item.image, item.mobileImage].filter(
+    (url) => typeof url === 'string' && url
+  );
+
+  const uploadedFile = resolveUploadedImageFile(req);
+  if (uploadedFile) {
+    const driveFile = await uploadRequestFileToGoogleDrive(
+      { ...req, file: uploadedFile },
+      { makePublic: true }
+    );
+    body.image = driveFile.viewUrl || driveFile.url;
+
+    if (typeof item.image === 'string' && item.image) {
+      await deleteDriveFilesForUrls({
+        userId: req.user._id,
+        urls: [item.image],
+      });
+    }
+  }
+
+  const normalizedBody = normalizeContentItemImageUrls(body);
+
+  const removableMobileImage =
+    typeof normalizedBody.mobileImage === 'string'
+    && normalizedBody.mobileImage
+    && normalizedBody.mobileImage !== item.mobileImage;
+
+  if (removableMobileImage && typeof item.mobileImage === 'string' && item.mobileImage) {
+    await deleteDriveFilesForUrls({
+      userId: req.user._id,
+      urls: [item.mobileImage],
     });
   }
 
@@ -338,23 +390,24 @@ const reorder = (modelKey) => asyncHandler(async (req, res) => {
     });
   }
 
-  const session = await Model.startSession();
-  session.startTransaction();
-
   try {
-    for (const { id, sortOrder } of items) {
-      await Model.findByIdAndUpdate(id, { sortOrder }, { session });
-    }
-    await session.commitTransaction();
-    session.endSession();
+    const bulkOps = items.map(({ id, sortOrder }) => ({
+      updateOne: {
+        filter: { _id: id },
+        update: { $set: { sortOrder } },
+      },
+    }));
+
+    await Model.bulkWrite(bulkOps, { ordered: false });
 
     res.status(200).json({
       success: true,
       message: 'Order updated successfully',
     });
   } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
+    if (error.name === 'BulkWriteError') {
+      throw new Error('One or more items could not be reordered');
+    }
     throw error;
   }
 });
@@ -392,6 +445,7 @@ const toggleActive = (modelKey) => asyncHandler(async (req, res) => {
 });
 
 const getHomepageSettings = asyncHandler(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const settings = await mongoose.model('HomepageSetting').getSettings();
   const plain = typeof settings?.toObject === 'function' ? settings.toObject() : settings;
   res.status(200).json({
@@ -439,8 +493,16 @@ const uploadImage = asyncHandler(async (req, res) => {
     { ...req, file: uploadedFile },
     { makePublic: true }
   );
-  const url = driveFile.url;
+  const url = driveFile.viewUrl || driveFile.url;
   const settings = await mongoose.model('HomepageSetting').getSettings();
+
+  if (settings.heroSectionBgImage) {
+    await deleteDriveFilesForUrls({
+      userId: req.user._id,
+      urls: [settings.heroSectionBgImage],
+    });
+  }
+
   const updated = await mongoose.model('HomepageSetting').findOneAndUpdate(
     { _id: settings._id },
     { $set: { heroSectionBgImage: url } },
@@ -451,6 +513,7 @@ const uploadImage = asyncHandler(async (req, res) => {
     url,
     originalName: uploadedFile.originalname,
     savedField: 'heroSectionBgImage',
+    replacedOldUrl: settings.heroSectionBgImage || null,
   });
   res.status(200).json({
     success: true,
@@ -507,16 +570,25 @@ const updateHomepageTabWithUpload = asyncHandler(async (req, res) => {
   const uploadedFile = req.file || req.files?.image?.[0] || req.files?.file?.[0];
   if (uploadedFile && TABS_WITH_IMAGE[tab]) {
     const imageField = TABS_WITH_IMAGE[tab];
+
+    if (typeof settings[imageField] === 'string' && settings[imageField]) {
+      await deleteDriveFilesForUrls({
+        userId: req.user._id,
+        urls: [settings[imageField]],
+      });
+    }
+
     const driveFile = await uploadRequestFileToGoogleDrive(
       { ...req, file: uploadedFile },
       { makePublic: true }
     );
-    updates[imageField] = normalizeGoogleDriveUrl(driveFile.url);
+    updates[imageField] = normalizeGoogleDriveUrl(driveFile.viewUrl || driveFile.url);
     console.log('[Homepage Settings] Saved uploaded image', {
       tab,
       imageField,
       fileId: driveFile.id,
       url: driveFile.url,
+      replacedOldUrl: settings[imageField] || null,
     });
   }
 

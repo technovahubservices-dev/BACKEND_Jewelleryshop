@@ -54,10 +54,14 @@ const homepageSettingSchema = mongoose.Schema(
       trim: true,
       default: 'Explore Collection',
     },
-    heroSectionCtaLink: {
+     heroSectionCtaLink: {
       type: String,
       trim: true,
       default: '/shop',
+    },
+    heroSectionEnabled: {
+      type: Boolean,
+      default: true,
     },
     heroSlides: [
       {
@@ -66,6 +70,7 @@ const homepageSettingSchema = mongoose.Schema(
         image: { type: String },
         link: { type: String, trim: true },
         isActive: { type: Boolean, default: true },
+        sortOrder: { type: Number, default: 0 },
       },
     ],
     promoSectionTitle: {
@@ -107,6 +112,7 @@ const homepageSettingSchema = mongoose.Schema(
         content: { type: String, required: true, maxlength: 2000 },
         rating: { type: Number, min: 1, max: 5, default: 5 },
         image: { type: String },
+        sortOrder: { type: Number, default: 0 },
       },
     ],
     categorySectionTitle: {
@@ -124,6 +130,7 @@ const homepageSettingSchema = mongoose.Schema(
         name: { type: String, required: true, trim: true },
         image: { type: String },
         link: { type: String, trim: true },
+        sortOrder: { type: Number, default: 0 },
       },
     ],
     videoSectionTitle: {
@@ -136,15 +143,16 @@ const homepageSettingSchema = mongoose.Schema(
       trim: true,
       maxlength: [500, 'Video section description cannot exceed 500 characters'],
     },
-     videoReels: [
-      {
-        title: { type: String, trim: true },
-        videoUrl: { type: String },
-        thumbnail: { type: String },
-        price: { type: String },
-        shopLink: { type: String, trim: true },
-      },
-    ],
+      videoReels: [
+       {
+         title: { type: String, trim: true },
+         videoUrl: { type: String },
+         thumbnail: { type: String },
+         price: { type: String },
+         shopLink: { type: String, trim: true },
+         sortOrder: { type: Number, default: 0 },
+       },
+     ],
     hipChainsSectionTitle: {
       type: String,
       trim: true,
@@ -178,6 +186,7 @@ const homepageSettingSchema = mongoose.Schema(
         image: { type: String },
         title: { type: String, trim: true },
         link: { type: String, trim: true },
+        sortOrder: { type: Number, default: 0 },
       },
     ],
     heritageCollectionImages: [
@@ -185,6 +194,7 @@ const homepageSettingSchema = mongoose.Schema(
         image: { type: String },
         title: { type: String, trim: true },
         link: { type: String, trim: true },
+        sortOrder: { type: Number, default: 0 },
       },
     ],
     footerText: {

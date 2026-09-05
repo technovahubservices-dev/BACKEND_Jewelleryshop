@@ -82,22 +82,13 @@ router.route('/homepage/settings/updateTabWithUpload')
 // Without this placement, upload failures (oversized file, wrong file type)
 // would bubble to the global error handler as a 500 with no useful context.
 router.use((err, req, res, next) => {
-  if (err && err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({
+  if (err && typeof err.code === 'string' && err.code.startsWith('LIMIT_')) {
+    const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    return res.status(status).json({
       success: false,
-      message: 'Uploaded image is too large. Maximum size is 10MB.',
-    });
-  }
-  if (err && err.code === 'LIMIT_FILE_COUNT') {
-    return res.status(400).json({
-      success: false,
-      message: 'Too many image files uploaded.',
-    });
-  }
-  if (err && err instanceof Error && err.message) {
-    return res.status(400).json({
-      success: false,
-      message: err.message,
+      message: err.code === 'LIMIT_FILE_SIZE'
+        ? 'Uploaded image is too large. Maximum size is 25MB.'
+        : err.message,
     });
   }
   next(err);

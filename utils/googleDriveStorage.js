@@ -18,6 +18,16 @@ const buildPublicDriveImageUrl = (id) => {
   return `https://drive.google.com/thumbnail?id=${encodeURIComponent(id)}&sz=w2000`;
 };
 
+const buildPublicDriveFileUrl = (id) => {
+  if (!id) {
+    return '';
+  }
+
+  // Direct, browser-accessible URL for a publicly shared Drive file. Works as
+  // an <img src> and, for video files, as a <video src>.
+  return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(id)}`;
+};
+
 const driveError = (message) => {
   const error = new Error(message);
   error.statusCode = 400;
@@ -59,6 +69,12 @@ const normalizeGoogleDriveUrl = (url) => {
     }
 
     if (parsed.pathname === '/thumbnail') {
+      return url;
+    }
+
+    // Preserve direct-view URLs (used for playable video <video src>), only
+    // normalizing to the canonical thumbnail form for images.
+    if (parsed.pathname === '/uc' && parsed.searchParams.get('export') === 'view') {
       return url;
     }
 
@@ -238,6 +254,12 @@ const uploadFileToGoogleDrive = async ({ userId, filePath, buffer, originalName,
     name: data.name,
     mimeType: data.mimeType,
     url,
+    // Browser-accessible direct URL suitable for <video src>. The thumbnail
+    // endpoint only returns a preview image, so videos need the Drive file
+    // view URL to be playable by the browser.
+    viewUrl: data.mimeType && data.mimeType.startsWith('video/')
+      ? buildPublicDriveFileUrl(data.id)
+      : url,
   };
 };
 
@@ -320,6 +342,8 @@ module.exports = {
   deleteFileFromGoogleDrive,
   getGoogleDriveFileId,
   normalizeGoogleDriveUrl,
+  buildPublicDriveImageUrl,
+  buildPublicDriveFileUrl,
   uploadFileToGoogleDrive,
   uploadRequestFileToGoogleDrive,
   uploadRequestFilesToGoogleDrive,
