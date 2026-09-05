@@ -108,7 +108,16 @@ app.use('/api/contact', require('./routes/contactRoutes'));
 
 // Global error handler
 app.use((err, req, res, next) => {
-  console.error(err.stack || err.message);
+  console.error('[Global Error Handler]', {
+    timestamp: new Date().toISOString(),
+    method: req.method,
+    url: req.originalUrl,
+    statusCode: err.statusCode,
+    errorName: err.name,
+    errorCode: err.code,
+    errorMessage: err.message,
+    errorStack: err.stack,
+  });
 
   if (err.name === 'CastError') {
     return res.status(400).json({
