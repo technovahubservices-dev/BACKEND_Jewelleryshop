@@ -1,4 +1,5 @@
 const Product = require('../models/Product');
+const asyncHandler = require('express-async-handler');
 const {
   deleteDriveFilesForUrls,
   normalizeGoogleDriveUrl,
@@ -124,6 +125,19 @@ exports.createProduct = async (req, res) => {
       });
     }
 
+    // SKU validation must happen BEFORE any image upload to Google Drive,
+    // so that duplicate SKUs are rejected early and do not leave orphaned files.
+    let sku = manualSku ? manualSku.trim() : '';
+    if (sku) {
+      const existingProduct = await Product.findOne({ sku });
+      if (existingProduct) {
+        return res.status(400).json({
+          success: false,
+          message: 'A product with this SKU already exists',
+        });
+      }
+    }
+
     const driveFiles = await uploadRequestFilesToGoogleDrive(req, { makePublic: true });
     const uploadedFiles = driveFiles.map((file) => file.viewUrl || file.url);
     console.log('[Product Create] Drive upload result', {
@@ -177,19 +191,10 @@ exports.createProduct = async (req, res) => {
       });
     }
 
-    let sku = manualSku ? manualSku.trim() : '';
     if (!sku) {
       const skuPrefix = generateSKU(name, category, metal);
       const skuNum = await getNextSkuNumber(skuPrefix);
       sku = `${skuPrefix}-${skuNum}`;
-    } else {
-      const existingProduct = await Product.findOne({ sku: sku });
-      if (existingProduct) {
-        return res.status(400).json({
-          success: false,
-          message: 'A product with this SKU already exists',
-        });
-      }
     }
 
     let parsedTags = tags;
@@ -275,6 +280,25 @@ exports.createProduct = async (req, res) => {
     });
   }
 };
+
+exports.checkSkuAvailability = asyncHandler(async (req, res) => {
+  const { sku } = req.query;
+
+  if (!sku || !sku.trim()) {
+    return res.status(400).json({
+      success: false,
+      message: 'SKU query parameter is required',
+    });
+  }
+
+  const existingProduct = await Product.findOne({ sku: sku.trim() });
+
+  res.status(200).json({
+    success: true,
+    available: !existingProduct,
+    sku: sku.trim(),
+  });
+});
 
 exports.getProducts = async (req, res) => {
   try {

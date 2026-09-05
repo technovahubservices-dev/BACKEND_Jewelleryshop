@@ -8,12 +8,15 @@ const {
   updateProduct,
   deleteProduct,
   seedProducts,
+  checkSkuAvailability,
 } = require('../controllers/productController');
 const { protect, admin } = require('../middleware/authMiddleware');
 
 router.route('/')
     .get(getProducts)
     .post(protect, admin, uploadImageMemory.array('images', 10), createProduct);
+
+router.get('/check-sku', checkSkuAvailability);
 
 router.post('/seed', protect, admin, seedProducts);
 
