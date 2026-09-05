@@ -12,7 +12,9 @@ const getRequiredGoogleConfig = () => {
   const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, FRONTEND_URL } = process.env;
 
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_REDIRECT_URI || !FRONTEND_URL) {
-    throw new Error('Google Drive OAuth environment variables are not fully configured');
+    const error = new Error('Google Drive OAuth is not fully configured. Please set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, and FRONTEND_URL environment variables.');
+    error.statusCode = 400;
+    throw error;
   }
 
   const redirectUrl = new URL(GOOGLE_REDIRECT_URI);

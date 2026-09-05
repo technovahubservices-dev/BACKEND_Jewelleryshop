@@ -15,7 +15,10 @@ const mediaFileFilter = (req, file, cb) => {
   if (IMAGE_EXT_RE.test(ext) || VIDEO_EXT_RE.test(ext)) {
     cb(null, true);
   } else {
-    cb(new Error('Only image (jpeg, jpg, png, webp, gif) or video (mp4, mov, avi, webm) files are allowed.'), false);
+    const error = new Error('Only image (jpeg, jpg, png, webp, gif) or video (mp4, mov, avi, webm) files are allowed.');
+    error.statusCode = 400;
+    error.isFileFilterError = true;
+    cb(error, false);
   }
 };
 

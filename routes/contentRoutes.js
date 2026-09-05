@@ -91,6 +91,12 @@ router.use((err, req, res, next) => {
         : err.message,
     });
   }
+  if (err && err.isFileFilterError) {
+    return res.status(err.statusCode || 400).json({
+      success: false,
+      message: err.message,
+    });
+  }
   next(err);
 });
 
