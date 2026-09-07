@@ -18,22 +18,23 @@ jest.mock('../utils/googleDriveStorage', () => {
   const actual = jest.requireActual('../utils/googleDriveStorage');
   return {
     ...actual,
-    uploadRequestFileToGoogleDrive: jest.fn(async (req, options = {}) => {
+     uploadRequestFileToGoogleDrive: jest.fn(async (req, options = {}) => {
       if (!req.file) return null;
       const isVideo = req.file.mimetype && req.file.mimetype.startsWith('video/');
       const id = 'mock-drive-id-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5);
+      const proxyUrl = '/api/upload/drive/' + id;
       return {
         id,
         name: req.file.originalname,
         mimeType: req.file.mimetype,
-        url: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
-        viewUrl: isVideo
-          ? 'https://drive.google.com/uc?export=view&id=' + id
+        url: proxyUrl,
+        viewUrl: proxyUrl,
+        publicDriveUrl: isVideo
+          ? 'https://drive.google.com/file/d/' + id + '/preview'
           : 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+        previewUrl: isVideo ? 'https://drive.google.com/file/d/' + id + '/preview' : null,
         mediaType: isVideo ? 'video' : 'image',
-        publicUrl: isVideo
-          ? 'https://drive.google.com/uc?export=view&id=' + id
-          : 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+        publicUrl: proxyUrl,
         uploadedAt: new Date().toISOString(),
       };
     }),
@@ -42,14 +43,13 @@ jest.mock('../utils/googleDriveStorage', () => {
       return req.files.map((file, idx) => {
         const isVideo = file.mimetype && file.mimetype.startsWith('video/');
         const id = 'mock-drive-id-' + Date.now() + '-' + idx;
+        const proxyUrl = '/api/upload/drive/' + id;
         return {
           id,
           name: file.originalname,
           mimeType: file.mimetype,
-          url: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
-          viewUrl: isVideo
-            ? 'https://drive.google.com/uc?export=view&id=' + id
-            : 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+          url: proxyUrl,
+          viewUrl: proxyUrl,
         };
       });
     }),
@@ -111,7 +111,7 @@ describe('CMS Watch & Shop — Video Management', () => {
 
       const reel = res.body.data.videoReels[0];
       expect(reel.title).toBe('Diamond Necklace Showcase');
-      expect(reel.videoUrl).toContain('drive.google.com/uc?export=view');
+      expect(reel.videoUrl).toContain('/api/upload/drive/');
       expect(reel.videoMetadata).toBeDefined();
       expect(reel.videoMetadata.driveFileId).toBeTruthy();
       expect(reel.videoMetadata.originalName).toBe('showcase.mp4');
@@ -156,7 +156,7 @@ describe('CMS Watch & Shop — Video Management', () => {
       const dbReel = dbSettings.videoReels[0];
 
       expect(dbReel.videoUrl).toBe(reel.videoUrl);
-      expect(dbReel.videoUrl).toContain('drive.google.com/uc?export=view');
+      expect(dbReel.videoUrl).toContain('/api/upload/drive/');
     });
   });
 
@@ -192,7 +192,7 @@ describe('CMS Watch & Shop — Video Management', () => {
       const reels = res.body.data.videoReels || [];
       expect(reels.length).toBe(1);
       expect(reels[0].title).toBe('Public Video');
-      expect(reels[0].videoUrl).toContain('drive.google.com');
+      expect(reels[0].videoUrl).toContain('/api/upload/drive/');
     });
 
     it('should also return from dedicated video-reels/active endpoint', async () => {
@@ -288,8 +288,8 @@ describe('CMS Watch & Shop — Video Management', () => {
         id: newUploadId,
         name: 'replacement.mp4',
         mimeType: 'video/mp4',
-        url: 'https://drive.google.com/thumbnail?id=' + newUploadId,
-        viewUrl: 'https://drive.google.com/uc?export=view&id=' + newUploadId,
+        url: '/api/upload/drive/' + newUploadId,
+        viewUrl: '/api/upload/drive/' + newUploadId,
       });
       deleteDriveFilesForUrls.mockClear();
 
@@ -752,10 +752,12 @@ describe('CMS Watch & Shop — Video Management', () => {
         id: 'verify-drive-id-1',
         name: 'verified.mp4',
         mimeType: 'video/mp4',
-        url: 'https://drive.google.com/thumbnail?id=verify-drive-id-1&sz=w2000',
-        viewUrl: 'https://drive.google.com/uc?export=view&id=verify-drive-id-1',
+        url: '/api/upload/drive/verify-drive-id-1',
+        viewUrl: '/api/upload/drive/verify-drive-id-1',
+        publicDriveUrl: 'https://drive.google.com/file/d/verify-drive-id-1/preview',
+        previewUrl: 'https://drive.google.com/file/d/verify-drive-id-1/preview',
         mediaType: 'video',
-        publicUrl: 'https://drive.google.com/uc?export=view&id=verify-drive-id-1',
+        publicUrl: '/api/upload/drive/verify-drive-id-1',
         uploadedAt: new Date().toISOString(),
       });
 
@@ -800,7 +802,7 @@ describe('CMS Watch & Shop — Video Management', () => {
         .attach('video', smallMp4, 'media-type.mp4');
 
       expect(res.status).toBe(201);
-      expect(res.body.data.videoReels[0].videoUrl).toContain('drive.google.com');
+      expect(res.body.data.videoReels[0].videoUrl).toContain('/api/upload/drive/');
       expect(res.body.data.videoReels[0].videoMetadata.mimeType).toBe('video/mp4');
     });
 
@@ -812,7 +814,7 @@ describe('CMS Watch & Shop — Video Management', () => {
         .attach('video', smallMp4, 'browser.mp4');
 
       const reel = res.body.data.videoReels[0];
-      expect(reel.videoUrl).toContain('drive.google.com');
+      expect(reel.videoUrl).toContain('/api/upload/drive/');
       expect(reel.videoUrl).not.toContain('/thumbnail');
       expect(reel.videoMetadata.mimeType).toBe('video/mp4');
     });
@@ -839,7 +841,7 @@ describe('CMS Watch & Shop — Video Management', () => {
 
       const staledUrl = 'https://drive.google.com/uc?export=view&id=old-file-id-123';
       const repairedUrl = repairDriveUrl(staledUrl);
-      expect(repairedUrl).toBe('https://drive.google.com/uc?export=view&id=old-file-id-123');
+      expect(repairedUrl).toBe('/api/upload/drive/old-file-id-123');
     });
 
     it('should preserve thumbnail URLs during repair', async () => {
@@ -847,7 +849,7 @@ describe('CMS Watch & Shop — Video Management', () => {
 
       const thumbUrl = 'https://drive.google.com/thumbnail?id=img-file-456&sz=w2000';
       const repaired = repairDriveUrl(thumbUrl);
-      expect(repaired).toBe(thumbUrl);
+      expect(repaired).toBe('/api/upload/drive/img-file-456');
     });
 
     it('should normalize non-canonical image URLs during repair', async () => {
@@ -856,7 +858,7 @@ describe('CMS Watch & Shop — Video Management', () => {
       const nonCanonical = 'https://drive.google.com/file/d/noncanonical-789/view';
       const repaired = repairDriveUrl(nonCanonical);
       expect(repaired).toContain('noncanonical-789');
-      expect(repaired).toContain('/thumbnail');
+      expect(repaired).toContain('/api/upload/drive/');
     });
 
     it('should verify existing videoReels URLs have valid format', async () => {
@@ -871,7 +873,7 @@ describe('CMS Watch & Shop — Video Management', () => {
 
       expect(res.status).toBe(201);
       const reel = res.body.data.videoReels[0];
-      expect(reel.videoUrl).toMatch(/^https:\/\/drive\.google\.com\//);
+      expect(reel.videoUrl).toMatch(/^\/api\/upload\/drive\//);
       expect(reel.videoMetadata.driveFileId).toBeTruthy();
       expect(reel.videoMetadata.originalName).toBe('format.mp4');
       expect(reel.videoMetadata.mimeType).toBe('video/mp4');
@@ -898,10 +900,10 @@ describe('CMS Watch & Shop — Video Management', () => {
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
       const reel = res.body.data.videoReels[0];
-      expect(reel.videoUrl).toContain('drive.google.com');
+      expect(reel.videoUrl).toContain('/api/upload/drive/');
       expect(reel.thumbnail).toBeTruthy();
       expect(reel.thumbnail).not.toBe('https://example.com/existing-thumb.jpg');
-      expect(reel.thumbnail).toContain('drive.google.com');
+      expect(reel.thumbnail).toContain('/api/upload/drive/');
       expect(reel.price).toBe('2500');
     });
 
@@ -937,7 +939,7 @@ describe('CMS Watch & Shop — Video Management', () => {
       expect(updateRes.status).toBe(200);
       const updated = updateRes.body.data.videoReels[0];
       expect(updated.title).toBe('Updated Thumb Title');
-      expect(updated.thumbnail).toContain('drive.google.com');
+      expect(updated.thumbnail).toContain('/api/upload/drive/');
       expect(updated.thumbnail).not.toBe('https://old-thumb.com/1.jpg');
     });
 

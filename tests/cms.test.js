@@ -26,6 +26,7 @@ const createAdminUser = async (email, password) => {
 
 const GOOGLE_DRIVE_THUMBNAIL_ID = '1abc123thumb';
 const GOOGLE_DRIVE_THUMBNAIL = `https://drive.google.com/thumbnail?id=${GOOGLE_DRIVE_THUMBNAIL_ID}&sz=w2000`;
+const PROXY_MEDIA_URL = `/api/upload/drive/${GOOGLE_DRIVE_THUMBNAIL_ID}`;
 const GOOGLE_DRIVE_FILE_URL = `https://drive.google.com/file/d/${GOOGLE_DRIVE_THUMBNAIL_ID}/view?usp=sharing`;
 const YOUTUBE_URL = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
 
@@ -83,7 +84,7 @@ describe('CMS — Homepage Settings (Botique parity)', () => {
       expect(res.statusCode).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data.videoReels[0].videoUrl).toBe(YOUTUBE_URL);
-      expect(res.body.data.videoReels[0].thumbnail).toBe(GOOGLE_DRIVE_THUMBNAIL);
+      expect(res.body.data.videoReels[0].thumbnail).toBe(PROXY_MEDIA_URL);
     });
 
     it('should normalize non-thumbnail Google Drive URLs to thumbnail format', async () => {
@@ -95,7 +96,7 @@ describe('CMS — Homepage Settings (Botique parity)', () => {
         });
 
       expect(res.statusCode).toBe(200);
-      expect(res.body.data.heroSectionBgImage).toBe(GOOGLE_DRIVE_THUMBNAIL);
+      expect(res.body.data.heroSectionBgImage).toBe(PROXY_MEDIA_URL);
     });
 
     it('should preserve uc?export=view video URLs (not normalize to thumbnail)', async () => {
@@ -114,7 +115,7 @@ describe('CMS — Homepage Settings (Botique parity)', () => {
         });
 
       expect(res.statusCode).toBe(200);
-      expect(res.body.data.videoReels[0].videoUrl).toBe(driveVideoUrl);
+      expect(res.body.data.videoReels[0].videoUrl).toBe('/api/upload/drive/video123');
     });
   });
 
@@ -292,7 +293,7 @@ describe('CMS — Image URL Normalization', () => {
       });
 
     expect(res.statusCode).toBe(201);
-    expect(res.body.data.image).toBe(GOOGLE_DRIVE_THUMBNAIL);
+    expect(res.body.data.image).toBe(PROXY_MEDIA_URL);
   });
 
   it('should normalize Google Drive URLs on GET (read-time)', async () => {
@@ -307,7 +308,7 @@ describe('CMS — Image URL Normalization', () => {
       .set('Authorization', `Bearer ${adminToken}`);
 
     expect(res.statusCode).toBe(200);
-    expect(res.body.data[0].image).toBe(GOOGLE_DRIVE_THUMBNAIL);
+    expect(res.body.data[0].image).toBe(PROXY_MEDIA_URL);
   });
 
   it('should preserve non-Google URLs (e.g. YouTube) in image fields', async () => {
@@ -336,7 +337,7 @@ describe('CMS — Image URL Normalization', () => {
       });
 
     expect(res.statusCode).toBe(201);
-    expect(res.body.data.image).toBe(GOOGLE_DRIVE_THUMBNAIL);
-    expect(res.body.data.mobileImage).toBe(GOOGLE_DRIVE_THUMBNAIL);
+    expect(res.body.data.image).toBe(PROXY_MEDIA_URL);
+    expect(res.body.data.mobileImage).toBe(PROXY_MEDIA_URL);
   });
 });

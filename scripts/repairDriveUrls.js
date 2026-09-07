@@ -10,23 +10,15 @@ const repairHomepageMediaUrls = async () => {
 
   const {
     getGoogleDriveFileId,
-    buildPublicDriveImageUrl,
-    buildPublicDriveFileUrl,
+    buildProxyMediaUrl,
     normalizeGoogleDriveUrl,
   } = require('../utils/googleDriveStorage');
-
-  const isVideoUrl = (url) => {
-    if (!url || typeof url !== 'string') return false;
-    return url.includes('/uc?') && url.includes('export=view');
-  };
 
   const urlToPublicUrl = (url) => {
     if (!url || typeof url !== 'string') return url;
     const fileId = getGoogleDriveFileId(url);
     if (!fileId) return url;
-    return isVideoUrl(url)
-      ? buildPublicDriveFileUrl(fileId)
-      : buildPublicDriveImageUrl(fileId);
+    return buildProxyMediaUrl(fileId);
   };
 
   let modified = 0;

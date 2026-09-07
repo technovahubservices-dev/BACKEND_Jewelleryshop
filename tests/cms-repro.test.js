@@ -23,18 +23,19 @@ jest.mock('../utils/googleDriveStorage', () => {
       if (!req.file) return null;
       const isVideo = req.file.mimetype && req.file.mimetype.startsWith('video/');
       const id = 'mock-drive-id-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5);
+      const proxyUrl = '/api/upload/drive/' + id;
       return {
         id,
         name: req.file.originalname,
         mimeType: req.file.mimetype,
-        url: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
-        viewUrl: isVideo
-          ? 'https://drive.google.com/uc?export=view&id=' + id
+        url: proxyUrl,
+        viewUrl: proxyUrl,
+        publicDriveUrl: isVideo
+          ? 'https://drive.google.com/file/d/' + id + '/preview'
           : 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+        previewUrl: isVideo ? 'https://drive.google.com/file/d/' + id + '/preview' : null,
         mediaType: isVideo ? 'video' : 'image',
-        publicUrl: isVideo
-          ? 'https://drive.google.com/uc?export=view&id=' + id
-          : 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+        publicUrl: proxyUrl,
         uploadedAt: new Date().toISOString(),
       };
     }),
@@ -43,14 +44,13 @@ jest.mock('../utils/googleDriveStorage', () => {
       return req.files.map((file, idx) => {
         const isVideo = file.mimetype && file.mimetype.startsWith('video/');
         const id = 'mock-drive-id-' + Date.now() + '-' + idx;
+        const proxyUrl = '/api/upload/drive/' + id;
         return {
           id,
           name: file.originalname,
           mimeType: file.mimetype,
-          url: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
-          viewUrl: isVideo
-            ? 'https://drive.google.com/uc?export=view&id=' + id
-            : 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+          url: proxyUrl,
+          viewUrl: proxyUrl,
         };
       });
     }),

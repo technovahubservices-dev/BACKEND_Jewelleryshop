@@ -18,14 +18,20 @@ const buildPublicDriveImageUrl = (id) => {
   return `https://drive.google.com/thumbnail?id=${encodeURIComponent(id)}&sz=w2000`;
 };
 
-const buildPublicDriveFileUrl = (id) => {
+const buildPreviewUrl = (id) => {
   if (!id) {
     return '';
   }
 
-  // Direct, browser-accessible URL for a publicly shared Drive file. Works as
-  // an <img src> and, for video files, as a <video src>.
-  return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(id)}`;
+  // Google Drive preview/embed URL suitable for iframe embedding.
+  return `https://drive.google.com/file/d/${encodeURIComponent(id)}/preview`;
+};
+
+const buildProxyMediaUrl = (fileId, type = 'image') => {
+  if (!fileId) {
+    return '';
+  }
+  return `/api/upload/drive/${encodeURIComponent(fileId)}`;
 };
 
 const driveError = (message) => {
@@ -54,34 +60,34 @@ const normalizeGoogleDriveUrl = (url) => {
     return url;
   }
 
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.toLowerCase();
-
-    if (!host.includes('google.com')) {
-      return url;
-    }
-
-    const fileId = getGoogleDriveFileId(url);
-
-    if (!fileId) {
-      return url;
-    }
-
-    if (parsed.pathname === '/thumbnail') {
-      return url;
-    }
-
-    // Preserve direct-view URLs (used for playable video <video src>), only
-    // normalizing to the canonical thumbnail form for images.
-    if (parsed.pathname === '/uc' && parsed.searchParams.get('export') === 'view') {
-      return url;
-    }
-
-    return `https://drive.google.com/thumbnail?id=${encodeURIComponent(fileId)}&sz=w2000`;
-  } catch (error) {
+  const trimmed = url.trim();
+  if (!trimmed) {
     return url;
   }
+
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch (error) {
+    if (/^[a-zA-Z0-9_-]{20,}$/.test(trimmed)) {
+      return buildProxyMediaUrl(trimmed);
+    }
+    return url;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+
+  if (!host.includes('google.com')) {
+    return url;
+  }
+
+  const fileId = getGoogleDriveFileId(trimmed);
+
+  if (!fileId) {
+    return url;
+  }
+
+  return buildProxyMediaUrl(fileId);
 };
 
 const getGoogleDriveFileCapabilities = async (userId, fileId) => {
@@ -137,21 +143,65 @@ const ensurePublicPermission = async (userId, fileId) => {
   return true;
 };
 
+const verifyDriveFileAccess = async (userId, fileId) => {
+  if (!fileId) {
+    const err = new Error('Google Drive file ID is required.');
+    err.code = 'DRIVE_FILE_ID_ERROR';
+    throw err;
+  }
+
+  const config = getRequiredGoogleConfig();
+  const metadata = await getDriveFileMetadata(userId, fileId);
+
+  const fileExists = metadata && metadata.id && !metadata.capabilities?.trashed;
+
+  if (!fileExists) {
+    const err = new Error('File does not exist or has been deleted in Google Drive.');
+    err.code = 'DRIVE_FILE_NOT_FOUND';
+    throw err;
+  }
+
+  const isInFolder = Array.isArray(metadata.parents) &&
+    metadata.parents.includes(config.folderId);
+
+  if (!isInFolder) {
+    console.warn('[Drive Verification] File is not in the configured folder', {
+      fileId,
+      expectedFolderId: config.folderId,
+      actualParents: metadata.parents || [],
+    });
+  }
+
+  const hasPublicRead = metadata.capabilities?.canReadFile === true ||
+    metadata.capabilities?.canDownload === true;
+
+  if (!hasPublicRead) {
+    const permissionSet = await ensurePublicPermission(userId, fileId);
+    if (!permissionSet) {
+      const err = new Error('File exists but public read permission could not be verified or applied.');
+      err.code = 'DRIVE_ACCESS_ERROR';
+      throw err;
+    }
+  }
+
+  return {
+    fileId: metadata.id,
+    mimeType: metadata.mimeType,
+    size: metadata.size,
+    name: metadata.name,
+    parents: metadata.parents || [],
+    inFolder: isInFolder,
+    publicRead: true,
+  };
+};
+
 const repairDriveUrl = (url) => {
   if (!url || typeof url !== 'string') return url;
 
   const fileId = getGoogleDriveFileId(url);
   if (!fileId) return url;
 
-  if (url.includes('uc?export=view')) {
-    return buildPublicDriveFileUrl(fileId);
-  }
-
-  if (url.includes('/thumbnail')) {
-    return buildPublicDriveImageUrl(fileId);
-  }
-
-  return buildPublicDriveImageUrl(fileId);
+  return buildProxyMediaUrl(fileId);
 };
 
 const getAccessToken = async (userId, { forceRefresh = false } = {}) => {
@@ -213,6 +263,68 @@ const requestDrive = async (userId, requestOptions) => {
         Authorization: `Bearer ${tokenResult.accessToken}`,
       },
     });
+  }
+
+  return response;
+};
+
+const getDriveFileMetadata = async (userId, fileId) => {
+  if (!fileId) {
+    const err = new Error('Google Drive file ID is required.');
+    err.code = 'DRIVE_FILE_ID_ERROR';
+    throw err;
+  }
+
+  const response = await requestDrive(userId, {
+    url: `${GOOGLE_FILES_ENDPOINT}/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,capabilities`,
+    method: 'GET',
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      const err = new Error('File not found in Google Drive.');
+      err.code = 'DRIVE_FILE_NOT_FOUND';
+      throw err;
+    }
+    if (response.status === 403) {
+      const err = new Error('Google Drive access denied. The file may not be publicly accessible.');
+      err.code = 'DRIVE_ACCESS_ERROR';
+      throw err;
+    }
+    const err = new Error('Failed to fetch Google Drive file metadata.');
+    err.code = response.status;
+    throw err;
+  }
+
+  return response.json();
+};
+
+const downloadDriveFileStream = async (userId, fileId) => {
+  if (!fileId) {
+    const err = new Error('Google Drive file ID is required.');
+    err.code = 'DRIVE_FILE_ID_ERROR';
+    throw err;
+  }
+
+  const response = await requestDrive(userId, {
+    url: `${GOOGLE_FILES_ENDPOINT}/${encodeURIComponent(fileId)}?alt=media`,
+    method: 'GET',
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      const err = new Error('File not found in Google Drive.');
+      err.code = 'DRIVE_FILE_NOT_FOUND';
+      throw err;
+    }
+    if (response.status === 403) {
+      const err = new Error('Google Drive access denied. The file may not be publicly accessible.');
+      err.code = 'DRIVE_ACCESS_ERROR';
+      throw err;
+    }
+    const err = new Error('Failed to download Google Drive file.');
+    err.code = response.status;
+    throw err;
   }
 
   return response;
@@ -289,27 +401,50 @@ const uploadFileToGoogleDrive = async ({ userId, filePath, buffer, originalName,
       expectedFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID,
       actualParents: data.parents || [],
     });
+    await deleteFileFromGoogleDrive({ userId, fileId: data.id });
     throw driveError('Google Drive uploaded the file to an unexpected folder');
   }
 
-  const url = buildPublicDriveImageUrl(data.id);
+  if (process.env.GOOGLE_DRIVE_FOLDER_ID) {
+    try {
+      await verifyDriveFileAccess(userId, data.id);
+      console.log('[Google Drive Upload] File verified', {
+        fileId: data.id,
+        status: 'verified',
+      });
+    } catch (verifyErr) {
+      console.error('[Google Drive Upload] File verification failed, deleting uploaded file', {
+        fileId: data.id,
+        error: verifyErr.message,
+        code: verifyErr.code,
+      });
+      await deleteFileFromGoogleDrive({ userId, fileId: data.id });
+      throw verifyErr;
+    }
+  }
 
-  console.log('[Google Drive Upload] Final image url', {
+  const proxyUrl = buildProxyMediaUrl(data.id);
+
+  console.log('[Google Drive Upload] Final media URL', {
     fileId: data.id,
-    url,
+    url: proxyUrl,
   });
 
   const isVideo = data.mimeType && data.mimeType.startsWith('video/');
-  const viewUrl = isVideo ? buildPublicDriveFileUrl(data.id) : url;
+  const publicDriveUrl = isVideo
+    ? buildPreviewUrl(data.id)
+    : buildPublicDriveImageUrl(data.id);
 
   return {
     id: data.id,
     name: data.name,
     mimeType: data.mimeType,
-    url,
-    viewUrl,
+    url: proxyUrl,
+    viewUrl: proxyUrl,
+    publicDriveUrl,
+    previewUrl: isVideo ? buildPreviewUrl(data.id) : null,
     mediaType: isVideo ? 'video' : 'image',
-    publicUrl: makePublic ? (isVideo ? viewUrl : url) : null,
+    publicUrl: makePublic ? proxyUrl : null,
     uploadedAt: new Date().toISOString(),
   };
 };
@@ -395,8 +530,12 @@ module.exports = {
   normalizeGoogleDriveUrl,
   repairDriveUrl,
   ensurePublicPermission,
+  getDriveFileMetadata,
+  downloadDriveFileStream,
   buildPublicDriveImageUrl,
-  buildPublicDriveFileUrl,
+  buildProxyMediaUrl,
+  buildPreviewUrl,
+  verifyDriveFileAccess,
   uploadFileToGoogleDrive,
   uploadRequestFileToGoogleDrive,
   uploadRequestFilesToGoogleDrive,

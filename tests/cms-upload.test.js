@@ -22,18 +22,19 @@ jest.mock('../utils/googleDriveStorage', () => {
       if (!req.file) return null;
       const isVideo = req.file.mimetype && req.file.mimetype.startsWith('video/');
       const id = 'mock-drive-id-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5);
+      const proxyUrl = '/api/upload/drive/' + id;
       return {
         id,
         name: req.file.originalname,
         mimeType: req.file.mimetype,
-        url: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
-        viewUrl: isVideo
-          ? 'https://drive.google.com/uc?export=view&id=' + id
+        url: proxyUrl,
+        viewUrl: proxyUrl,
+        publicDriveUrl: isVideo
+          ? 'https://drive.google.com/file/d/' + id + '/preview'
           : 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+        previewUrl: isVideo ? 'https://drive.google.com/file/d/' + id + '/preview' : null,
         mediaType: isVideo ? 'video' : 'image',
-        publicUrl: isVideo
-          ? 'https://drive.google.com/uc?export=view&id=' + id
-          : 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+        publicUrl: proxyUrl,
         uploadedAt: new Date().toISOString(),
       };
     }),
@@ -42,14 +43,13 @@ jest.mock('../utils/googleDriveStorage', () => {
       return req.files.map((file, idx) => {
         const isVideo = file.mimetype && file.mimetype.startsWith('video/');
         const id = 'mock-drive-id-' + Date.now() + '-' + idx;
+        const proxyUrl = '/api/upload/drive/' + id;
         return {
           id,
           name: file.originalname,
           mimeType: file.mimetype,
-          url: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
-          viewUrl: isVideo
-            ? 'https://drive.google.com/uc?export=view&id=' + id
-            : 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+          url: proxyUrl,
+          viewUrl: proxyUrl,
         };
       });
     }),
@@ -101,11 +101,11 @@ describe('CMS Upload/Save — With Image Upload', () => {
 
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
-      expect(res.body.url).toContain('drive.google.com');
+      expect(res.body.url).toContain('/api/upload/drive/');
 
       const dbItem = await HeroBanner.findById(res.body.data._id);
       expect(dbItem).toBeTruthy();
-      expect(dbItem.image).toContain('drive.google.com');
+      expect(dbItem.image).toContain('/api/upload/drive/');
 
       const getRes = await request(app)
         .get('/api/content/heroBanners')
@@ -114,7 +114,7 @@ describe('CMS Upload/Save — With Image Upload', () => {
       expect(getRes.status).toBe(200);
       const found = getRes.body.data.find((i) => i._id === res.body.data._id);
       expect(found).toBeTruthy();
-      expect(found.image).toContain('drive.google.com');
+      expect(found.image).toContain('/api/upload/drive/');
     });
 
     it('should create product with uploaded image', async () => {
@@ -169,7 +169,7 @@ describe('CMS Upload/Save — With Image Upload', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data.image).toBeTruthy();
-      expect(res.body.data.image).toContain('drive.google.com');
+      expect(res.body.data.image).toContain('/api/upload/drive/');
 
       const { deleteDriveFilesForUrls } = require('../utils/googleDriveStorage');
       expect(deleteDriveFilesForUrls).toHaveBeenCalled();

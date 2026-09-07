@@ -4,7 +4,8 @@ const asyncHandler = require('express-async-handler');
 const {
   deleteDriveFilesForUrls,
   normalizeGoogleDriveUrl,
-  buildPublicDriveImageUrl,
+  buildProxyMediaUrl,
+  getGoogleDriveFileId,
   uploadRequestFileToGoogleDrive,
 } = require('../utils/googleDriveStorage');
 
@@ -40,8 +41,8 @@ const HOMEPAGE_IMAGE_URL_FIELDS = [
   'footerLogoUrl',
 ];
 
-// Fields that hold Google Drive image URLs. YouTube URLs and direct video URLs
-// in videoUrl are NOT normalized through the Drive normalizer — they are preserved as-is.
+// Fields that hold Google Drive image URLs.
+// videoReels.videoUrl is also normalized to a Drive proxy URL below.
 const HOMEPAGE_IMAGE_URL_ARRAY_FIELDS = [
   { key: 'heroSlides', subKey: 'image' },
   { key: 'homepageTestimonials', subKey: 'image' },
@@ -50,6 +51,25 @@ const HOMEPAGE_IMAGE_URL_ARRAY_FIELDS = [
   { key: 'festiveExclusiveImages', subKey: 'image' },
   { key: 'heritageCollectionImages', subKey: 'image' },
 ];
+
+const normalizeVideoReelUrls = (item) => {
+  if (!item || typeof item !== 'object') return item;
+  const result = { ...item };
+
+  const fileId = getGoogleDriveFileId(result.videoUrl)
+    || (result.videoMetadata && result.videoMetadata.driveFileId)
+    || null;
+
+  if (fileId) {
+    result.videoUrl = buildProxyMediaUrl(fileId);
+  }
+
+  if (typeof result.thumbnail === 'string' && result.thumbnail.trim()) {
+    result.thumbnail = normalizeGoogleDriveUrl(result.thumbnail);
+  }
+
+  return result;
+};
 
 // Homepage arrays that support explicit ordering via a sortOrder sub-field.
 const HOMEPAGE_SORTABLE_ARRAYS = [
@@ -93,6 +113,12 @@ const normalizeHomepageImageUrls = (data) => {
         return item;
       });
     }
+  }
+
+  if (Array.isArray(result.videoReels)) {
+    result.videoReels = result.videoReels.map((reel) =>
+      reel && typeof reel === 'object' ? normalizeVideoReelUrls(reel) : reel
+    );
   }
 
   result = sortHomepageArrays(result);
@@ -643,7 +669,14 @@ const uploadVideoReel = asyncHandler(async (req, res) => {
     { makePublic: true }
   );
 
-   const videoUrl = driveFile.viewUrl || driveFile.url;
+  if (!driveFile || !driveFile.id) {
+    return res.status(500).json({
+      success: false,
+      message: 'Google Drive upload failed. No file ID was returned.',
+    });
+  }
+
+  const videoUrl = buildProxyMediaUrl(driveFile.id);
 
   let normalized;
   try {
@@ -755,7 +788,14 @@ const updateVideoReel = asyncHandler(async (req, res) => {
       { makePublic: true }
     );
 
-    newVideoUrl = driveFile.viewUrl || driveFile.url;
+    if (!driveFile || !driveFile.id) {
+      return res.status(500).json({
+        success: false,
+        message: 'Google Drive upload failed. No file ID was returned.',
+      });
+    }
+
+    newVideoUrl = buildProxyMediaUrl(driveFile.id);
     newVideoMetadata = {
       driveFileId: driveFile.id,
       originalName: uploadedFile.originalname,
@@ -772,6 +812,12 @@ const updateVideoReel = asyncHandler(async (req, res) => {
       { ...req, file: thumbnailFile },
       { makePublic: true }
     );
+    if (!thumbDriveFile || !thumbDriveFile.url) {
+      return res.status(500).json({
+        success: false,
+        message: 'Thumbnail upload to Google Drive failed.',
+      });
+    }
     settings.videoReels[reelIndex].thumbnail = thumbDriveFile.url;
     console.log('[Video Reel Update] Thumbnail uploaded to Drive', {
       fileId: thumbDriveFile.id,
