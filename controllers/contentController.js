@@ -760,6 +760,7 @@ const updateVideoReel = asyncHandler(async (req, res) => {
   const existingReel = settings.videoReels[reelIndex];
   const oldDriveFileId = existingReel.videoMetadata?.driveFileId;
   const oldVideoUrl = existingReel.videoUrl;
+  const oldThumbnailUrl = existingReel.thumbnail;
 
   let newVideoUrl = oldVideoUrl;
   let newVideoMetadata = existingReel.videoMetadata;
@@ -807,6 +808,7 @@ const updateVideoReel = asyncHandler(async (req, res) => {
   }
 
   const thumbnailFile = req.files?.thumbnail?.[0];
+  let thumbnailChanged = false;
   if (thumbnailFile) {
     const thumbDriveFile = await uploadRequestFileToGoogleDrive(
       { ...req, file: thumbnailFile },
@@ -819,6 +821,7 @@ const updateVideoReel = asyncHandler(async (req, res) => {
       });
     }
     settings.videoReels[reelIndex].thumbnail = thumbDriveFile.url;
+    thumbnailChanged = true;
     console.log('[Video Reel Update] Thumbnail uploaded to Drive', {
       fileId: thumbDriveFile.id,
       thumbnailUrl: thumbDriveFile.url,
@@ -858,19 +861,26 @@ const updateVideoReel = asyncHandler(async (req, res) => {
 
   await settings.save();
 
+  const urlsToDelete = [];
   if (videoChanged && oldDriveFileId) {
+    urlsToDelete.push(oldVideoUrl);
+  }
+  if (thumbnailChanged && oldThumbnailUrl) {
+    urlsToDelete.push(oldThumbnailUrl);
+  }
+
+  if (urlsToDelete.length > 0) {
     try {
       await deleteDriveFilesForUrls({
         userId: req.user._id,
-        urls: [oldVideoUrl],
+        urls: urlsToDelete,
       });
-      console.log('[Video Reel Update] Deleted old Drive file', {
-        oldDriveFileId,
-        oldVideoUrl,
+      console.log('[Video Reel Update] Deleted old Drive file(s)', {
+        URLs: urlsToDelete,
       });
     } catch (cleanupError) {
-      console.error('[Video Reel Update] Failed to delete old Drive file', {
-        oldDriveFileId,
+      console.error('[Video Reel Update] Failed to delete old Drive file(s)', {
+        urls: urlsToDelete,
         error: cleanupError.message,
       });
     }
@@ -902,27 +912,36 @@ const deleteVideoReel = asyncHandler(async (req, res) => {
   const reel = settings.videoReels[reelIndex];
   const oldVideoUrl = reel.videoUrl;
   const driveFileId = reel.videoMetadata?.driveFileId;
+  const thumbnailUrl = reel.thumbnail;
 
-  settings.videoReels.splice(reelIndex, 1);
-  await settings.save();
+  const urlsToDelete = [oldVideoUrl, thumbnailUrl].filter(Boolean);
 
-  if (oldVideoUrl && driveFileId) {
+  let deleteError = null;
+  if (urlsToDelete.length > 0) {
     try {
       await deleteDriveFilesForUrls({
         userId: req.user._id,
-        urls: [oldVideoUrl],
-      });
-      console.log('[Video Reel Delete] Deleted Drive file', {
-        driveFileId,
-        url: oldVideoUrl,
+        urls: urlsToDelete,
       });
     } catch (cleanupError) {
-      console.error('[Video Reel Delete] Failed to delete Drive file', {
+      deleteError = cleanupError;
+      console.error('[Video Reel Delete] Failed to delete Drive file(s)', {
         driveFileId,
         error: cleanupError.message,
       });
     }
   }
+
+  if (deleteError) {
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to delete media files from Google Drive. The video reel was not removed.',
+      error: deleteError.message,
+    });
+  }
+
+  settings.videoReels.splice(reelIndex, 1);
+  await settings.save();
 
   const plain = typeof settings?.toObject === 'function' ? settings.toObject() : settings;
 

@@ -515,8 +515,20 @@ const deleteFileFromGoogleDrive = async ({ userId, fileId }) => {
   });
 };
 
+const getFileIdFromUrl = (url) => {
+  if (!url || typeof url !== 'string') return null;
+
+  const driveFileId = getGoogleDriveFileId(url);
+  if (driveFileId) return driveFileId;
+
+  const proxyMatch = url.match(/^\/api\/upload\/drive\/(.+)$/);
+  if (proxyMatch) return proxyMatch[1];
+
+  return null;
+};
+
 const deleteDriveFilesForUrls = async ({ userId, urls = [] }) => {
-  const fileIds = [...new Set(urls.map(getGoogleDriveFileId).filter(Boolean))];
+  const fileIds = [...new Set(urls.map(getFileIdFromUrl).filter(Boolean))];
 
   for (const fileId of fileIds) {
     await deleteFileFromGoogleDrive({ userId, fileId });
