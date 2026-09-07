@@ -728,4 +728,138 @@ describe('CMS Watch & Shop — Video Management', () => {
       expect(res.body.data.heroSlides[0].title).toBe('Valid Slide');
     });
   });
+
+  describe('18. Google Drive permission verification', () => {
+    it('should verify permission was set after upload', async () => {
+      const { uploadRequestFileToGoogleDrive, ensurePublicPermission } = require('../utils/googleDriveStorage');
+      uploadRequestFileToGoogleDrive.mockClear();
+      uploadRequestFileToGoogleDrive.mockResolvedValueOnce({
+        id: 'verify-drive-id-1',
+        name: 'verified.mp4',
+        mimeType: 'video/mp4',
+        url: 'https://drive.google.com/thumbnail?id=verify-drive-id-1&sz=w2000',
+        viewUrl: 'https://drive.google.com/uc?export=view&id=verify-drive-id-1',
+        mediaType: 'video',
+        publicUrl: 'https://drive.google.com/uc?export=view&id=verify-drive-id-1',
+        uploadedAt: new Date().toISOString(),
+      });
+
+      const res = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Permission Verified')
+        .field('thumbnail', 'https://example.com/thumb.jpg')
+        .field('shopLink', '/shop/123')
+        .field('price', '2500')
+        .attach('video', smallMp4, 'verify.mp4');
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      const reel = res.body.data.videoReels[0];
+      expect(reel.videoMetadata).toBeDefined();
+      expect(reel.videoMetadata.driveFileId).toBeTruthy();
+      expect(reel.videoMetadata.originalName).toBe('verify.mp4');
+      expect(reel.videoMetadata.mimeType).toBe('video/mp4');
+    });
+
+    it('should return 500 when Drive upload returns no file ID', async () => {
+      const { uploadRequestFileToGoogleDrive } = require('../utils/googleDriveStorage');
+      uploadRequestFileToGoogleDrive.mockClear();
+      uploadRequestFileToGoogleDrive.mockResolvedValueOnce(null);
+
+      const res = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Failed Upload')
+        .attach('video', smallMp4, 'fail.mp4');
+
+      expect(res.status).toBe(500);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should store mediaType metadata correctly for video reel', async () => {
+      const res = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Media Type Video')
+        .attach('video', smallMp4, 'media-type.mp4');
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.videoReels[0].videoUrl).toContain('drive.google.com');
+      expect(res.body.data.videoReels[0].videoMetadata.mimeType).toBe('video/mp4');
+    });
+
+    it('should return browser-compatible video URL (not thumbnail for video)', async () => {
+      const res = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Browser Compatible')
+        .attach('video', smallMp4, 'browser.mp4');
+
+      const reel = res.body.data.videoReels[0];
+      expect(reel.videoUrl).toContain('drive.google.com');
+      expect(reel.videoUrl).not.toContain('/thumbnail');
+      expect(reel.videoMetadata.mimeType).toBe('video/mp4');
+    });
+
+    it('should not expose internal file paths or Buffer objects in response', async () => {
+      const res = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'No Internal Paths')
+        .attach('video', smallMp4, 'clean.mp4');
+
+      const reel = res.body.data.videoReels[0];
+      const jsonStr = JSON.stringify(reel);
+      expect(jsonStr).not.toContain('buffer');
+      expect(jsonStr).not.toContain('tmp');
+      expect(jsonStr).not.toContain('/uploads/');
+      expect(jsonStr).not.toContain('path');
+    });
+  });
+
+  describe('19. Drive URL repair mechanism', () => {
+    it('should repair stale drive.google.com URLs in HomepageSetting', async () => {
+      const { normalizeGoogleDriveUrl, repairDriveUrl } = require('../utils/googleDriveStorage');
+
+      const staledUrl = 'https://drive.google.com/uc?export=view&id=old-file-id-123';
+      const repairedUrl = repairDriveUrl(staledUrl);
+      expect(repairedUrl).toBe('https://drive.google.com/uc?export=view&id=old-file-id-123');
+    });
+
+    it('should preserve thumbnail URLs during repair', async () => {
+      const { repairDriveUrl } = require('../utils/googleDriveStorage');
+
+      const thumbUrl = 'https://drive.google.com/thumbnail?id=img-file-456&sz=w2000';
+      const repaired = repairDriveUrl(thumbUrl);
+      expect(repaired).toBe(thumbUrl);
+    });
+
+    it('should normalize non-canonical image URLs during repair', async () => {
+      const { repairDriveUrl } = require('../utils/googleDriveStorage');
+
+      const nonCanonical = 'https://drive.google.com/file/d/noncanonical-789/view';
+      const repaired = repairDriveUrl(nonCanonical);
+      expect(repaired).toContain('noncanonical-789');
+      expect(repaired).toContain('/thumbnail');
+    });
+
+    it('should verify existing videoReels URLs have valid format', async () => {
+      const res = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Format Check')
+        .field('thumbnail', 'https://example.com/thumb.jpg')
+        .field('shopLink', '/shop')
+        .field('price', '2500')
+        .attach('video', smallMp4, 'format.mp4');
+
+      expect(res.status).toBe(201);
+      const reel = res.body.data.videoReels[0];
+      expect(reel.videoUrl).toMatch(/^https:\/\/drive\.google\.com\//);
+      expect(reel.videoMetadata.driveFileId).toBeTruthy();
+      expect(reel.videoMetadata.originalName).toBe('format.mp4');
+      expect(reel.videoMetadata.mimeType).toBe('video/mp4');
+    });
+  });
 });

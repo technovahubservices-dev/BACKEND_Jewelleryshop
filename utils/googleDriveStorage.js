@@ -84,6 +84,76 @@ const normalizeGoogleDriveUrl = (url) => {
   }
 };
 
+const getGoogleDriveFileCapabilities = async (userId, fileId) => {
+  const response = await requestDrive(userId, {
+    url: `${GOOGLE_FILES_ENDPOINT}/${encodeURIComponent(fileId)}?fields=capabilities,id,name,mimeType,permissions`,
+    method: 'GET',
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  return response.json();
+};
+
+const ensurePublicPermission = async (userId, fileId) => {
+  const file = await getGoogleDriveFileCapabilities(userId, fileId);
+  if (!file) return false;
+
+  const existingAnyone = Array.isArray(file.permissions)
+    ? file.permissions.find((p) => p.type === 'anyone' && p.role === 'reader')
+    : null;
+
+  if (existingAnyone) {
+    return true;
+  }
+
+  const permissionResponse = await requestDrive(userId, {
+    url: `${GOOGLE_FILES_ENDPOINT}/${encodeURIComponent(fileId)}/permissions`,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'anyone', role: 'reader' }),
+  });
+
+  let permissionData = null;
+  try {
+    permissionData = await permissionResponse.json();
+  } catch (error) {
+    permissionData = null;
+  }
+
+  if (!permissionResponse.ok) {
+    const permissionError = permissionData?.error?.message || 'Unknown Google Drive permission error';
+    console.error('[Google Drive] Permission creation failed on repair', {
+      fileId,
+      status: permissionResponse.status,
+      error: permissionError,
+    });
+    return false;
+  }
+
+  console.log('[Google Drive] Public permission set successfully', { fileId });
+  return true;
+};
+
+const repairDriveUrl = (url) => {
+  if (!url || typeof url !== 'string') return url;
+
+  const fileId = getGoogleDriveFileId(url);
+  if (!fileId) return url;
+
+  if (url.includes('uc?export=view')) {
+    return buildPublicDriveFileUrl(fileId);
+  }
+
+  if (url.includes('/thumbnail')) {
+    return buildPublicDriveImageUrl(fileId);
+  }
+
+  return buildPublicDriveImageUrl(fileId);
+};
+
 const getAccessToken = async (userId, { forceRefresh = false } = {}) => {
   const connection = await GoogleDriveConnection.findOne({ user: userId });
 
@@ -201,36 +271,16 @@ const uploadFileToGoogleDrive = async ({ userId, filePath, buffer, originalName,
   }
 
   if (makePublic) {
-    const permissionResponse = await requestDrive(userId, {
-      url: `${GOOGLE_FILES_ENDPOINT}/${encodeURIComponent(data.id)}/permissions`,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'anyone', role: 'reader' }),
-    });
+    const permissionSet = await ensurePublicPermission(userId, data.id);
 
-    let permissionData = null;
-    try {
-      permissionData = await permissionResponse.json();
-    } catch (error) {
-      permissionData = null;
+    if (!permissionSet) {
+      throw driveError('File uploaded to Google Drive, but public sharing permission could not be verified or applied.');
     }
 
-    console.log('[Google Drive Upload] Permission response', {
-      ok: permissionResponse.ok,
-      status: permissionResponse.status,
+    console.log('[Google Drive Upload] Public permission verified', {
       fileId: data.id,
-      response: permissionData,
+      status: 'verified',
     });
-
-    if (!permissionResponse.ok) {
-      const permissionError = permissionData?.error?.message || 'Unknown Google Drive permission error';
-      console.error('[Google Drive Upload] Permission creation failed', {
-        fileId: data.id,
-        status: permissionResponse.status,
-        error: permissionError,
-      });
-      throw driveError(`File uploaded, but Google Drive sharing failed: ${permissionError}`);
-    }
   }
 
   if (!Array.isArray(data.parents) || !data.parents.includes(process.env.GOOGLE_DRIVE_FOLDER_ID)) {
@@ -249,17 +299,18 @@ const uploadFileToGoogleDrive = async ({ userId, filePath, buffer, originalName,
     url,
   });
 
+  const isVideo = data.mimeType && data.mimeType.startsWith('video/');
+  const viewUrl = isVideo ? buildPublicDriveFileUrl(data.id) : url;
+
   return {
     id: data.id,
     name: data.name,
     mimeType: data.mimeType,
     url,
-    // Browser-accessible direct URL suitable for <video src>. The thumbnail
-    // endpoint only returns a preview image, so videos need the Drive file
-    // view URL to be playable by the browser.
-    viewUrl: data.mimeType && data.mimeType.startsWith('video/')
-      ? buildPublicDriveFileUrl(data.id)
-      : url,
+    viewUrl,
+    mediaType: isVideo ? 'video' : 'image',
+    publicUrl: makePublic ? (isVideo ? viewUrl : url) : null,
+    uploadedAt: new Date().toISOString(),
   };
 };
 
@@ -342,6 +393,8 @@ module.exports = {
   deleteFileFromGoogleDrive,
   getGoogleDriveFileId,
   normalizeGoogleDriveUrl,
+  repairDriveUrl,
+  ensurePublicPermission,
   buildPublicDriveImageUrl,
   buildPublicDriveFileUrl,
   uploadFileToGoogleDrive,
