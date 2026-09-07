@@ -19,25 +19,40 @@ jest.mock('../utils/googleDriveStorage', () => {
   const actual = jest.requireActual('../utils/googleDriveStorage');
   return {
     ...actual,
-    uploadRequestFileToGoogleDrive: jest.fn(async (req, options = {}) => {
+     uploadRequestFileToGoogleDrive: jest.fn(async (req, options = {}) => {
       if (!req.file) return null;
+      const isVideo = req.file.mimetype && req.file.mimetype.startsWith('video/');
+      const id = 'mock-drive-id-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5);
       return {
-        id: 'mock-drive-id-' + Date.now(),
+        id,
         name: req.file.originalname,
         mimeType: req.file.mimetype,
-        url: 'https://drive.google.com/thumbnail?id=mock-drive-id&sz=w2000',
-        viewUrl: 'https://drive.google.com/uc?export=view&id=mock-drive-id',
+        url: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+        viewUrl: isVideo
+          ? 'https://drive.google.com/uc?export=view&id=' + id
+          : 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+        mediaType: isVideo ? 'video' : 'image',
+        publicUrl: isVideo
+          ? 'https://drive.google.com/uc?export=view&id=' + id
+          : 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+        uploadedAt: new Date().toISOString(),
       };
     }),
     uploadRequestFilesToGoogleDrive: jest.fn(async (req, options = {}) => {
       if (!req.files || req.files.length === 0) return [];
-      return req.files.map((file, idx) => ({
-        id: 'mock-drive-id-' + Date.now() + '-' + idx,
-        name: file.originalname,
-        mimeType: file.mimetype,
-        url: 'https://drive.google.com/thumbnail?id=mock-drive-id&sz=w2000',
-        viewUrl: 'https://drive.google.com/uc?export=view&id=mock-drive-id',
-      }));
+      return req.files.map((file, idx) => {
+        const isVideo = file.mimetype && file.mimetype.startsWith('video/');
+        const id = 'mock-drive-id-' + Date.now() + '-' + idx;
+        return {
+          id,
+          name: file.originalname,
+          mimeType: file.mimetype,
+          url: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+          viewUrl: isVideo
+            ? 'https://drive.google.com/uc?export=view&id=' + id
+            : 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+        };
+      });
     }),
     deleteDriveFilesForUrls: jest.fn(async () => {}),
   };

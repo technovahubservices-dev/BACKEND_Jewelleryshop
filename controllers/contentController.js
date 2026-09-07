@@ -4,6 +4,7 @@ const asyncHandler = require('express-async-handler');
 const {
   deleteDriveFilesForUrls,
   normalizeGoogleDriveUrl,
+  buildPublicDriveImageUrl,
   uploadRequestFileToGoogleDrive,
 } = require('../utils/googleDriveStorage');
 
@@ -642,13 +643,7 @@ const uploadVideoReel = asyncHandler(async (req, res) => {
     { makePublic: true }
   );
 
-  const videoUrl = driveFile.viewUrl || driveFile.url;
-
-  const settings = await mongoose.model('HomepageSetting').getSettings();
-
-  const maxOrder = settings.videoReels.length > 0
-    ? Math.max(...settings.videoReels.map((r) => (r.sortOrder != null ? r.sortOrder : 0))) + 1
-    : 0;
+   const videoUrl = driveFile.viewUrl || driveFile.url;
 
   let normalized;
   try {
@@ -660,7 +655,28 @@ const uploadVideoReel = asyncHandler(async (req, res) => {
     });
   }
 
-   const newReel = {
+  const thumbnailFile = req.files?.thumbnail?.[0];
+  let thumbnailUrl = normalized.thumbnail !== undefined ? normalized.thumbnail : '';
+
+  if (thumbnailFile) {
+    const thumbDriveFile = await uploadRequestFileToGoogleDrive(
+      { ...req, file: thumbnailFile },
+      { makePublic: true }
+    );
+    thumbnailUrl = thumbDriveFile.url;
+    console.log('[Video Reel Upload] Thumbnail uploaded to Drive', {
+      fileId: thumbDriveFile.id,
+      thumbnailUrl,
+    });
+  }
+
+  const settings = await mongoose.model('HomepageSetting').getSettings();
+
+  const maxOrder = settings.videoReels.length > 0
+    ? Math.max(...settings.videoReels.map((r) => (r.sortOrder != null ? r.sortOrder : 0))) + 1
+    : 0;
+
+  const newReel = {
     title: normalized.title !== undefined ? normalized.title : '',
     videoUrl,
     videoMetadata: {
@@ -668,7 +684,7 @@ const uploadVideoReel = asyncHandler(async (req, res) => {
       originalName: uploadedFile.originalname,
       mimeType: driveFile.mimeType,
     },
-     thumbnail: normalized.thumbnail !== undefined ? normalized.thumbnail : '',
+     thumbnail: thumbnailUrl,
     price: normalized.price !== undefined ? normalized.price : '',
     shopLink: normalized.shopLink !== undefined ? normalized.shopLink : '',
     isActive: normalized.isActive !== undefined ? normalized.isActive : true,
@@ -748,6 +764,19 @@ const updateVideoReel = asyncHandler(async (req, res) => {
 
     settings.videoReels[reelIndex].videoUrl = newVideoUrl;
     settings.videoReels[reelIndex].videoMetadata = newVideoMetadata;
+  }
+
+  const thumbnailFile = req.files?.thumbnail?.[0];
+  if (thumbnailFile) {
+    const thumbDriveFile = await uploadRequestFileToGoogleDrive(
+      { ...req, file: thumbnailFile },
+      { makePublic: true }
+    );
+    settings.videoReels[reelIndex].thumbnail = thumbDriveFile.url;
+    console.log('[Video Reel Update] Thumbnail uploaded to Drive', {
+      fileId: thumbDriveFile.id,
+      thumbnailUrl: thumbDriveFile.url,
+    });
   }
 
   let normalized;

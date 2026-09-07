@@ -20,23 +20,38 @@ jest.mock('../utils/googleDriveStorage', () => {
     ...actual,
     uploadRequestFileToGoogleDrive: jest.fn(async (req, options = {}) => {
       if (!req.file) return null;
+      const isVideo = req.file.mimetype && req.file.mimetype.startsWith('video/');
+      const id = 'mock-drive-id-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5);
       return {
-        id: 'mock-drive-id-' + Date.now(),
+        id,
         name: req.file.originalname,
         mimeType: req.file.mimetype,
-        url: 'https://drive.google.com/thumbnail?id=mock-drive-id&sz=w2000',
-        viewUrl: 'https://drive.google.com/uc?export=view&id=mock-drive-id',
+        url: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+        viewUrl: isVideo
+          ? 'https://drive.google.com/uc?export=view&id=' + id
+          : 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+        mediaType: isVideo ? 'video' : 'image',
+        publicUrl: isVideo
+          ? 'https://drive.google.com/uc?export=view&id=' + id
+          : 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+        uploadedAt: new Date().toISOString(),
       };
     }),
     uploadRequestFilesToGoogleDrive: jest.fn(async (req, options = {}) => {
       if (!req.files || req.files.length === 0) return [];
-      return req.files.map((file, idx) => ({
-        id: 'mock-drive-id-' + Date.now() + '-' + idx,
-        name: file.originalname,
-        mimeType: file.mimetype,
-        url: 'https://drive.google.com/thumbnail?id=mock-drive-id&sz=w2000',
-        viewUrl: 'https://drive.google.com/uc?export=view&id=mock-drive-id',
-      }));
+      return req.files.map((file, idx) => {
+        const isVideo = file.mimetype && file.mimetype.startsWith('video/');
+        const id = 'mock-drive-id-' + Date.now() + '-' + idx;
+        return {
+          id,
+          name: file.originalname,
+          mimeType: file.mimetype,
+          url: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+          viewUrl: isVideo
+            ? 'https://drive.google.com/uc?export=view&id=' + id
+            : 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+        };
+      });
     }),
     deleteDriveFilesForUrls: jest.fn(async () => {}),
   };
@@ -860,6 +875,90 @@ describe('CMS Watch & Shop — Video Management', () => {
       expect(reel.videoMetadata.driveFileId).toBeTruthy();
       expect(reel.videoMetadata.originalName).toBe('format.mp4');
       expect(reel.videoMetadata.mimeType).toBe('video/mp4');
+    });
+  });
+
+  describe('20. Thumbnail + Video combined upload', () => {
+    const thumbPng = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64'
+    );
+
+    it('should upload video + thumbnail in single request', async () => {
+      const res = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Combined Upload')
+        .field('price', '2500')
+        .field('shopLink', '/shop/combined')
+        .field('thumbnail', 'https://example.com/existing-thumb.jpg')
+        .attach('video', smallMp4, 'combined.mp4')
+        .attach('thumbnail', thumbPng, 'thumb.png');
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      const reel = res.body.data.videoReels[0];
+      expect(reel.videoUrl).toContain('drive.google.com');
+      expect(reel.thumbnail).toBeTruthy();
+      expect(reel.thumbnail).not.toBe('https://example.com/existing-thumb.jpg');
+      expect(reel.thumbnail).toContain('drive.google.com');
+      expect(reel.price).toBe('2500');
+    });
+
+    it('should accept thumbnail as text URL when no file provided', async () => {
+      const res = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Text Thumbnail')
+        .field('thumbnail', 'https://example.com/text-thumb.jpg')
+        .attach('video', smallMp4, 'textthumb.mp4');
+
+      expect(res.status).toBe(201);
+      const reel = res.body.data.videoReels[0];
+      expect(reel.thumbnail).toBe('https://example.com/text-thumb.jpg');
+    });
+
+    it('should update video reel with new thumbnail file', async () => {
+      const uploadRes = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Update Thumb Video')
+        .field('thumbnail', 'https://old-thumb.com/1.jpg')
+        .attach('video', smallMp4, 'updthumb.mp4');
+
+      const reelId = uploadRes.body.data.videoReels[0]._id;
+
+      const updateRes = await request(app)
+        .put(`/api/content/homepage/video-reels/${reelId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Updated Thumb Title')
+        .attach('thumbnail', thumbPng, 'new-thumb.png');
+
+      expect(updateRes.status).toBe(200);
+      const updated = updateRes.body.data.videoReels[0];
+      expect(updated.title).toBe('Updated Thumb Title');
+      expect(updated.thumbnail).toContain('drive.google.com');
+      expect(updated.thumbnail).not.toBe('https://old-thumb.com/1.jpg');
+    });
+
+    it('should retain existing thumbnail when no new one provided during update', async () => {
+      const uploadRes = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Retain Thumb')
+        .field('thumbnail', 'https://keep-this.com/existing.jpg')
+        .attach('video', smallMp4, 'retain.mp4');
+
+      const reelId = uploadRes.body.data.videoReels[0]._id;
+
+      const updateRes = await request(app)
+        .put(`/api/content/homepage/video-reels/${reelId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Retained Thumb Title');
+
+      expect(updateRes.status).toBe(200);
+      const updated = updateRes.body.data.videoReels[0];
+      expect(updated.thumbnail).toBe('https://keep-this.com/existing.jpg');
     });
   });
 });

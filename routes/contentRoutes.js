@@ -89,6 +89,7 @@ router.route('/homepage/settings/updateTabWithUpload')
 const VIDEO_UPLOAD_FIELDS = [
   { name: 'video', maxCount: 1 },
   { name: 'file', maxCount: 1 },
+  { name: 'thumbnail', maxCount: 1 },
 ];
 const videoUploadMiddleware = uploadImageMemory.fields(VIDEO_UPLOAD_FIELDS);
 

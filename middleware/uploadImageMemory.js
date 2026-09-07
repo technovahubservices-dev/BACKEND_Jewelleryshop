@@ -1,8 +1,8 @@
 const path = require('path');
 const multer = require('multer');
 
-const IMAGE_EXT_RE = /jpeg|jpg|png|webp|gif/;
-const VIDEO_EXT_RE = /mp4|mov|avi|webm|mpeg/;
+const IMAGE_EXT_RE = /jpeg|jpg|png|webp|gif|avif|heic|heif|bmp|tiff/;
+const VIDEO_EXT_RE = /mp4|mov|avi|webm|mpeg|ogv|wmv/;
 
 const storage = multer.memoryStorage();
 
