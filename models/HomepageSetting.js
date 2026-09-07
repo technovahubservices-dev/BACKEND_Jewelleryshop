@@ -49,16 +49,8 @@ const homepageSettingSchema = mongoose.Schema(
     heroSectionBgImage: {
       type: String,
     },
-    heroSectionCtaText: {
-      type: String,
-      trim: true,
-      default: 'Explore Collection',
-    },
-     heroSectionCtaLink: {
-      type: String,
-      trim: true,
-      default: '/shop',
-    },
+    
+    
     heroSectionEnabled: {
       type: Boolean,
       default: true,
@@ -144,15 +136,21 @@ const homepageSettingSchema = mongoose.Schema(
       maxlength: [500, 'Video section description cannot exceed 500 characters'],
     },
       videoReels: [
-       {
-         title: { type: String, trim: true },
-         videoUrl: { type: String },
-         thumbnail: { type: String },
-         price: { type: String },
-         shopLink: { type: String, trim: true },
-         sortOrder: { type: Number, default: 0 },
-       },
-     ],
+        {
+          title: { type: String, trim: true },
+          videoUrl: { type: String },
+          videoMetadata: {
+            driveFileId: { type: String },
+            originalName: { type: String },
+            mimeType: { type: String },
+          },
+          thumbnail: { type: String },
+          price: { type: String },
+          shopLink: { type: String, trim: true },
+          isActive: { type: Boolean, default: true },
+          sortOrder: { type: Number, default: 0 },
+        },
+      ],
     hipChainsSectionTitle: {
       type: String,
       trim: true,

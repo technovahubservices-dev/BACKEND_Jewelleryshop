@@ -1,3 +1,4 @@
+const path = require('path');
 const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const {
@@ -295,28 +296,9 @@ const update = (modelKey) => asyncHandler(async (req, res) => {
       { makePublic: true }
     );
     body.image = driveFile.viewUrl || driveFile.url;
-
-    if (typeof item.image === 'string' && item.image) {
-      await deleteDriveFilesForUrls({
-        userId: req.user._id,
-        urls: [item.image],
-      });
-    }
   }
 
   const normalizedBody = normalizeContentItemImageUrls(body);
-
-  const removableMobileImage =
-    typeof normalizedBody.mobileImage === 'string'
-    && normalizedBody.mobileImage
-    && normalizedBody.mobileImage !== item.mobileImage;
-
-  if (removableMobileImage && typeof item.mobileImage === 'string' && item.mobileImage) {
-    await deleteDriveFilesForUrls({
-      userId: req.user._id,
-      urls: [item.mobileImage],
-    });
-  }
 
   Object.keys(normalizedBody).forEach((key) => {
     if (key === '_id' || key === '__v' || key === 'createdAt' || key === 'updatedAt') return;
@@ -330,6 +312,22 @@ const update = (modelKey) => asyncHandler(async (req, res) => {
   }
 
   const updated = await item.save();
+
+  // Delete old Drive images only after the new image has been uploaded
+  // and the MongoDB record has been saved successfully.
+  if (oldImageUrls.length > 0) {
+    try {
+      await deleteDriveFilesForUrls({
+        userId: req.user._id,
+        urls: oldImageUrls,
+      });
+    } catch (cleanupError) {
+      console.error('Failed to delete old Drive images during update', {
+        urls: oldImageUrls,
+        error: cleanupError.message,
+      });
+    }
+  }
 
   const plainUpdated = typeof updated?.toObject === 'function' ? updated.toObject() : updated;
 
@@ -448,9 +446,17 @@ const getHomepageSettings = asyncHandler(async (req, res) => {
   res.set('Cache-Control', 'no-store');
   const settings = await mongoose.model('HomepageSetting').getSettings();
   const plain = typeof settings?.toObject === 'function' ? settings.toObject() : settings;
+  const normalized = normalizeHomepageImageUrls(plain);
+
+  // Public API: only return active video reels. Inactive reels are hidden
+  // from the public-facing homepage but remain visible in admin endpoints.
+  if (Array.isArray(normalized.videoReels)) {
+    normalized.videoReels = normalized.videoReels.filter((reel) => reel.isActive !== false);
+  }
+
   res.status(200).json({
     success: true,
-    data: normalizeHomepageImageUrls(plain),
+    data: normalized,
   });
 });
 
@@ -496,30 +502,356 @@ const uploadImage = asyncHandler(async (req, res) => {
   const url = driveFile.viewUrl || driveFile.url;
   const settings = await mongoose.model('HomepageSetting').getSettings();
 
-  if (settings.heroSectionBgImage) {
-    await deleteDriveFilesForUrls({
-      userId: req.user._id,
-      urls: [settings.heroSectionBgImage],
-    });
-  }
+  const oldImageUrl = settings.heroSectionBgImage;
 
   const updated = await mongoose.model('HomepageSetting').findOneAndUpdate(
     { _id: settings._id },
     { $set: { heroSectionBgImage: url } },
     { new: true, runValidators: true }
   );
+
+  if (oldImageUrl) {
+    try {
+      await deleteDriveFilesForUrls({
+        userId: req.user._id,
+        urls: [oldImageUrl],
+      });
+      console.log('[Homepage Image Upload] Deleted old Drive image', {
+        oldImageUrl,
+      });
+    } catch (cleanupError) {
+      console.error('[Homepage Image Upload] Failed to delete old Drive image', {
+        oldImageUrl,
+        error: cleanupError.message,
+      });
+    }
+  }
+
   console.log('[Homepage Image Upload] Uploaded image', {
     fileId: driveFile.id,
     url,
     originalName: uploadedFile.originalname,
     savedField: 'heroSectionBgImage',
-    replacedOldUrl: settings.heroSectionBgImage || null,
+    replacedOldUrl: oldImageUrl || null,
   });
   res.status(200).json({
     success: true,
     message: 'Image uploaded successfully',
     url,
     data: normalizeHomepageImageUrls(typeof updated?.toObject === 'function' ? updated.toObject() : updated),
+  });
+});
+
+const VIDEO_MIME_TYPES = ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska'];
+const VIDEO_EXT_RE = /mp4|webm|ogg|mov|avi|mkv/;
+
+const uploadVideoReel = asyncHandler(async (req, res) => {
+  const uploadedFile = req.file || req.files?.video?.[0] || req.files?.file?.[0] || req.files?.image?.[0];
+
+  if (!uploadedFile) {
+    return res.status(400).json({
+      success: false,
+      message: 'No video file uploaded',
+    });
+  }
+
+  const ext = path.extname(uploadedFile.originalname || '').replace('.', '').toLowerCase();
+  if (!VIDEO_EXT_RE.test(ext)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Only video files (mp4, webm, ogg, mov, avi, mkv) are allowed.',
+    });
+  }
+
+  const mimeType = uploadedFile.mimetype || '';
+  if (!VIDEO_MIME_TYPES.some((mt) => mimeType.startsWith(mt) || mimeType === 'application/octet-stream')) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid video MIME type. Supported: mp4, webm, ogg, mov, avi, mkv.',
+    });
+  }
+
+  const driveFile = await uploadRequestFileToGoogleDrive(
+    { ...req, file: uploadedFile },
+    { makePublic: true }
+  );
+
+  const videoUrl = driveFile.viewUrl || driveFile.url;
+
+  const settings = await mongoose.model('HomepageSetting').getSettings();
+
+  const maxOrder = await mongoose.model('HomepageSetting').findOne({})
+    .sort('-videoReels.sortOrder')
+    .select('videoReels.sortOrder');
+
+  const newSortOrder = (maxOrder?.videoReels?.[0]?.sortOrder ?? -1) + 1;
+
+  const newReel = {
+    title: req.body.title || '',
+    videoUrl,
+    videoMetadata: {
+      driveFileId: driveFile.id,
+      originalName: uploadedFile.originalname,
+      mimeType: driveFile.mimeType,
+    },
+    thumbnail: req.body.thumbnail || '',
+    price: req.body.price || '',
+    shopLink: req.body.shopLink || '',
+    isActive: req.body.isActive !== undefined ? (req.body.isActive === true || req.body.isActive === 'true') : true,
+    sortOrder: parseInt(req.body.sortOrder, 10) || newSortOrder,
+  };
+
+  settings.videoReels.push(newReel);
+  await settings.save();
+
+  const plain = typeof settings?.toObject === 'function' ? settings.toObject() : settings;
+
+  console.log('[Video Reel Upload] Uploaded video', {
+    fileId: driveFile.id,
+    videoUrl,
+    originalName: uploadedFile.originalname,
+    mimeType: driveFile.mimeType,
+  });
+
+  res.status(201).json({
+    success: true,
+    message: 'Video reel created successfully',
+    data: normalizeHomepageImageUrls(plain),
+  });
+});
+
+const updateVideoReel = asyncHandler(async (req, res) => {
+  const settings = await mongoose.model('HomepageSetting').getSettings();
+
+  const reelIndex = settings.videoReels.findIndex(
+    (reel) => String(reel._id) === String(req.params.id)
+  );
+
+  if (reelIndex === -1) {
+    return res.status(404).json({
+      success: false,
+      message: 'Video reel not found',
+    });
+  }
+
+  const existingReel = settings.videoReels[reelIndex];
+  const oldDriveFileId = existingReel.videoMetadata?.driveFileId;
+  const oldVideoUrl = existingReel.videoUrl;
+
+  let newVideoUrl = oldVideoUrl;
+  let newVideoMetadata = existingReel.videoMetadata;
+
+  const uploadedFile = req.file || req.files?.video?.[0] || req.files?.file?.[0] || req.files?.image?.[0];
+
+  if (uploadedFile) {
+    const ext = path.extname(uploadedFile.originalname || '').replace('.', '').toLowerCase();
+    if (!VIDEO_EXT_RE.test(ext)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Only video files (mp4, webm, ogg, mov, avi, mkv) are allowed.',
+      });
+    }
+
+    const mimeType = uploadedFile.mimetype || '';
+    if (!VIDEO_MIME_TYPES.some((mt) => mimeType.startsWith(mt) || mimeType === 'application/octet-stream')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid video MIME type. Supported: mp4, webm, ogg, mov, avi, mkv.',
+      });
+    }
+
+    const driveFile = await uploadRequestFileToGoogleDrive(
+      { ...req, file: uploadedFile },
+      { makePublic: true }
+    );
+
+    newVideoUrl = driveFile.viewUrl || driveFile.url;
+    newVideoMetadata = {
+      driveFileId: driveFile.id,
+      originalName: uploadedFile.originalname,
+      mimeType: driveFile.mimeType,
+    };
+
+    settings.videoReels[reelIndex].videoUrl = newVideoUrl;
+    settings.videoReels[reelIndex].videoMetadata = newVideoMetadata;
+  }
+
+  if (req.body.title !== undefined) {
+    settings.videoReels[reelIndex].title = req.body.title;
+  }
+  if (req.body.thumbnail !== undefined) {
+    settings.videoReels[reelIndex].thumbnail = req.body.thumbnail;
+  }
+  if (req.body.price !== undefined) {
+    settings.videoReels[reelIndex].price = req.body.price;
+  }
+  if (req.body.shopLink !== undefined) {
+    settings.videoReels[reelIndex].shopLink = req.body.shopLink;
+  }
+  if (req.body.isActive !== undefined) {
+    settings.videoReels[reelIndex].isActive = req.body.isActive === true || req.body.isActive === 'true';
+  }
+  if (req.body.sortOrder !== undefined) {
+    settings.videoReels[reelIndex].sortOrder = parseInt(req.body.sortOrder, 10);
+  }
+
+  const videoChanged = newVideoUrl !== oldVideoUrl;
+
+  await settings.save();
+
+  if (videoChanged && oldDriveFileId) {
+    try {
+      await deleteDriveFilesForUrls({
+        userId: req.user._id,
+        urls: [oldVideoUrl],
+      });
+      console.log('[Video Reel Update] Deleted old Drive file', {
+        oldDriveFileId,
+        oldVideoUrl,
+      });
+    } catch (cleanupError) {
+      console.error('[Video Reel Update] Failed to delete old Drive file', {
+        oldDriveFileId,
+        error: cleanupError.message,
+      });
+    }
+  }
+
+  const plain = typeof settings?.toObject === 'function' ? settings.toObject() : settings;
+
+  res.status(200).json({
+    success: true,
+    message: 'Video reel updated successfully',
+    data: normalizeHomepageImageUrls(plain),
+  });
+});
+
+const deleteVideoReel = asyncHandler(async (req, res) => {
+  const settings = await mongoose.model('HomepageSetting').getSettings();
+
+  const reelIndex = settings.videoReels.findIndex(
+    (reel) => String(reel._id) === String(req.params.id)
+  );
+
+  if (reelIndex === -1) {
+    return res.status(404).json({
+      success: false,
+      message: 'Video reel not found',
+    });
+  }
+
+  const reel = settings.videoReels[reelIndex];
+  const oldVideoUrl = reel.videoUrl;
+  const driveFileId = reel.videoMetadata?.driveFileId;
+
+  settings.videoReels.splice(reelIndex, 1);
+  await settings.save();
+
+  if (oldVideoUrl && driveFileId) {
+    try {
+      await deleteDriveFilesForUrls({
+        userId: req.user._id,
+        urls: [oldVideoUrl],
+      });
+      console.log('[Video Reel Delete] Deleted Drive file', {
+        driveFileId,
+        url: oldVideoUrl,
+      });
+    } catch (cleanupError) {
+      console.error('[Video Reel Delete] Failed to delete Drive file', {
+        driveFileId,
+        error: cleanupError.message,
+      });
+    }
+  }
+
+  const plain = typeof settings?.toObject === 'function' ? settings.toObject() : settings;
+
+  res.status(200).json({
+    success: true,
+    message: 'Video reel deleted successfully',
+    data: normalizeHomepageImageUrls(plain),
+  });
+});
+
+const reorderVideoReels = asyncHandler(async (req, res) => {
+  const { items } = req.body;
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'Items array is required',
+    });
+  }
+
+  const settings = await mongoose.model('HomepageSetting').getSettings();
+
+  const updates = {};
+
+  items.forEach(({ id, sortOrder }) => {
+    const idx = settings.videoReels.findIndex((reel) => String(reel._id) === String(id));
+    if (idx !== -1) {
+      updates[idx] = parseInt(sortOrder, 10);
+    }
+  });
+
+  Object.keys(updates).forEach((idx) => {
+    settings.videoReels[Number(idx)].sortOrder = updates[idx];
+  });
+
+  settings.markModified('videoReels');
+  await settings.save();
+
+  const freshSettings = await mongoose.model('HomepageSetting').getSettings();
+  const plain = typeof freshSettings?.toObject === 'function' ? freshSettings.toObject() : freshSettings;
+
+  res.status(200).json({
+    success: true,
+    message: 'Video reel order updated successfully',
+    data: normalizeHomepageImageUrls(plain),
+  });
+});
+
+const toggleVideoReel = asyncHandler(async (req, res) => {
+  const settings = await mongoose.model('HomepageSetting').getSettings();
+
+  const reelIndex = settings.videoReels.findIndex(
+    (reel) => String(reel._id) === String(req.params.id)
+  );
+
+  if (reelIndex === -1) {
+    return res.status(404).json({
+      success: false,
+      message: 'Video reel not found',
+    });
+  }
+
+  settings.videoReels[reelIndex].isActive = !settings.videoReels[reelIndex].isActive;
+  await settings.save();
+
+  const plain = typeof settings?.toObject === 'function' ? settings.toObject() : settings;
+
+  res.status(200).json({
+    success: true,
+    message: `Status updated: ${settings.videoReels[reelIndex].isActive ? 'Active' : 'Inactive'}`,
+    data: normalizeHomepageImageUrls(plain),
+  });
+});
+
+const getVideoReelsPublic = asyncHandler(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const settings = await mongoose.model('HomepageSetting').getSettings();
+  const plain = typeof settings?.toObject === 'function' ? settings.toObject() : settings;
+  const normalized = normalizeHomepageImageUrls(plain);
+
+  const activeReels = Array.isArray(normalized.videoReels)
+    ? normalized.videoReels.filter((reel) => reel.isActive !== false)
+    : [];
+
+  res.status(200).json({
+    success: true,
+    count: activeReels.length,
+    data: activeReels,
   });
 });
 
@@ -568,14 +900,12 @@ const updateHomepageTabWithUpload = asyncHandler(async (req, res) => {
   const updates = normalizeHomepageImageUrls(payload);
 
   const uploadedFile = req.file || req.files?.image?.[0] || req.files?.file?.[0];
+  const oldImageUrls = [];
   if (uploadedFile && TABS_WITH_IMAGE[tab]) {
     const imageField = TABS_WITH_IMAGE[tab];
 
     if (typeof settings[imageField] === 'string' && settings[imageField]) {
-      await deleteDriveFilesForUrls({
-        userId: req.user._id,
-        urls: [settings[imageField]],
-      });
+      oldImageUrls.push(settings[imageField]);
     }
 
     const driveFile = await uploadRequestFileToGoogleDrive(
@@ -605,6 +935,21 @@ const updateHomepageTabWithUpload = asyncHandler(async (req, res) => {
     { $set: safeUpdates },
     { new: true, runValidators: true }
   );
+
+  // Delete old Drive files only after the new image has been uploaded and MongoDB saved.
+  if (oldImageUrls.length > 0) {
+    try {
+      await deleteDriveFilesForUrls({
+        userId: req.user._id,
+        urls: oldImageUrls,
+      });
+    } catch (cleanupError) {
+      console.error('[Homepage Settings] Failed to delete old Drive image', {
+        urls: oldImageUrls,
+        error: cleanupError.message,
+      });
+    }
+  }
 
   const plainUpdated = typeof updated?.toObject === 'function' ? updated.toObject() : updated;
 
@@ -667,4 +1012,10 @@ module.exports = {
   updateHomepageTab,
   updateHomepageTabWithUpload,
   uploadImage,
+  uploadVideoReel,
+  updateVideoReel,
+  deleteVideoReel,
+  reorderVideoReels,
+  toggleVideoReel,
+  getVideoReelsPublic,
 };

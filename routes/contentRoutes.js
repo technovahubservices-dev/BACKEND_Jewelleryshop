@@ -15,6 +15,12 @@ const {
   updateHomepageTab,
   updateHomepageTabWithUpload,
   uploadImage,
+  uploadVideoReel,
+  updateVideoReel,
+  deleteVideoReel,
+  reorderVideoReels,
+  toggleVideoReel,
+  getVideoReelsPublic,
 } = require('../controllers/contentController');
 const { protect, admin } = require('../middleware/authMiddleware');
 
@@ -76,6 +82,38 @@ router.route('/homepage/settings/updateTabWithUpload')
     contentImageMiddleware,
     updateHomepageTabWithUpload
   );
+
+// Watch & Shop — video reel management
+// Order matters: specific routes (reorder, active, upload) must be declared
+// BEFORE the /:id parametric route so Express matches them correctly.
+const VIDEO_UPLOAD_FIELDS = [
+  { name: 'video', maxCount: 1 },
+  { name: 'file', maxCount: 1 },
+];
+const videoUploadMiddleware = uploadImageMemory.fields(VIDEO_UPLOAD_FIELDS);
+
+// Public — active video reels only
+router.route('/homepage/video-reels/active')
+  .get(getVideoReelsPublic);
+
+// Admin upload endpoint
+router.route('/homepage/video-reels/upload')
+  .post(protect, admin, videoUploadMiddleware, uploadVideoReel);
+
+// Admin list all + reorder
+router.route('/homepage/video-reels')
+  .get(protect, admin, getVideoReelsPublic);
+
+router.route('/homepage/video-reels/reorder')
+  .put(protect, admin, reorderVideoReels);
+
+// Individual video reel operations
+router.route('/homepage/video-reels/:id')
+  .put(protect, admin, videoUploadMiddleware, updateVideoReel)
+  .delete(protect, admin, deleteVideoReel);
+
+router.route('/homepage/video-reels/:id/toggle')
+  .put(protect, admin, toggleVideoReel);
 
 // Multer upload error handler — MUST be registered after the routes so it can
 // actually intercept multer errors thrown by the inline `contentImageMiddleware`.
