@@ -511,4 +511,221 @@ describe('CMS Watch & Shop — Video Management', () => {
       expect(res.body.data[0].isActive).not.toBe(false);
     });
   });
+
+  describe('16. Type-safe field validation', () => {
+    const webmBuffer = Buffer.from(
+      'AAAAIGZ0eXB3ZWJtAAAACGxvYm9zdGVzAAAAbG9ib2J1cwAAAAAAAA=' +
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGGZ0eXBl',
+      'base64'
+    );
+
+    it('should accept valid WebM upload', async () => {
+      const res = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'WebM Video')
+        .attach('video', webmBuffer, 'webm-video.webm');
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('should reject object value for title (fixes TypeError)', async () => {
+      const res = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', JSON.stringify({ en: 'Updated Title' }))
+        .attach('video', smallMp4, 'test.mp4');
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.videoReels[0].title).toBe('{"en":"Updated Title"}');
+    });
+
+    it('should reject array value for title without TypeError', async () => {
+      const res = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Title 1')
+        .field('title', 'Title 2')
+        .attach('video', smallMp4, 'test.mp4');
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('title must be a string value');
+    });
+
+    it('should reject array value for shopLink without TypeError', async () => {
+      const res = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Safe Title')
+        .field('shopLink', '/shop/1')
+        .field('shopLink', '/shop/2')
+        .attach('video', smallMp4, 'test.mp4');
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('shopLink must be a string value');
+    });
+
+    it('should store videoMetadata as clean object (not full file object)', async () => {
+      const res = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Metadata Check')
+        .attach('video', smallMp4, 'meta.mp4');
+
+      const reel = res.body.data.videoReels[0];
+      expect(reel.videoMetadata).toBeDefined();
+      expect(typeof reel.videoMetadata).toBe('object');
+      expect(Array.isArray(reel.videoMetadata)).toBe(false);
+      expect(reel.videoMetadata.driveFileId).toBeTruthy();
+      expect(reel.videoMetadata.originalName).toBe('meta.mp4');
+      expect(reel.videoMetadata.mimeType).toBe('video/mp4');
+      expect(reel.videoMetadata).not.toHaveProperty('buffer');
+      expect(reel.videoMetadata).not.toHaveProperty('path');
+    });
+
+    it('should accept thumbnail as string and not store file objects', async () => {
+      const res = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Thumbnail Test')
+        .field('thumbnail', 'https://example.com/thumb.jpg')
+        .attach('video', smallMp4, 'thumb.mp4');
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.videoReels[0].thumbnail).toBe('https://example.com/thumb.jpg');
+      expect(typeof res.body.data.videoReels[0].thumbnail).toBe('string');
+    });
+
+    it('should reject non-string thumbnail (array) with 400', async () => {
+      const res = await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Bad Thumb')
+        .field('thumbnail', 'https://example.com/thumb1.jpg')
+        .field('thumbnail', 'https://example.com/thumb2.jpg')
+        .attach('video', smallMp4, 'test.mp4');
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('thumbnail must be a string value');
+    });
+  });
+
+  describe('17. Hero section stale data cleanup', () => {
+    it('should verify homepage API returns hero data fields', async () => {
+      await request(app)
+        .post('/api/content/homepage/video-reels/upload')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .field('title', 'Hero Video')
+        .attach('video', smallMp4, 'hero.mp4');
+
+      const res = await request(app)
+        .get('/api/content/homepage/settings');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data).toHaveProperty('heroSectionTitle');
+      expect(res.body.data).toHaveProperty('heroSectionSubtitle');
+      expect(res.body.data).toHaveProperty('heroSlides');
+      expect(res.body.data).toHaveProperty('videoReels');
+      expect(res.body.data).toHaveProperty('heroSectionEnabled');
+    });
+
+    it('should NOT contain stale "Updated Title" in any hero field', async () => {
+      await request(app)
+        .put('/api/content/homepage/settings')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          heroSectionTitle: 'Real Title',
+          heroSectionSubtitle: 'Real Subtitle',
+          heroSlides: [
+            { title: 'Real Slide Title', subtitle: 'Real Subtitle', image: '', link: '/shop', isActive: true, sortOrder: 0 },
+          ],
+        });
+
+      const res = await request(app)
+        .get('/api/content/homepage/settings');
+
+      const jsonStr = JSON.stringify(res.body.data);
+      expect(jsonStr).not.toContain('Updated Title');
+      expect(jsonStr).not.toContain('Explore Collection');
+    });
+
+    it('should clear stale hero data when updated with empty/clean values', async () => {
+      await HomepageSetting.updateOne(
+        {},
+        {
+          $set: {
+            heroSectionTitle: 'Updated Title',
+            heroSectionSubtitle: 'Explore Collection',
+          },
+        },
+        { upsert: true }
+      );
+
+      await request(app)
+        .put('/api/content/homepage/settings')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          heroSectionTitle: '',
+          heroSectionSubtitle: '',
+        });
+
+      const res = await request(app)
+        .get('/api/content/homepage/settings');
+
+      expect(res.body.data.heroSectionTitle).toBe('');
+      expect(res.body.data.heroSectionSubtitle).toBe('');
+      expect(res.body.data.heroSectionTitle).not.toBe('Updated Title');
+      expect(res.body.data.heroSectionSubtitle).not.toBe('Explore Collection');
+    });
+
+    it('should not have stale values in default homepage on fresh start', async () => {
+      await HomepageSetting.deleteMany({});
+
+      const res = await request(app)
+        .get('/api/content/homepage/settings');
+
+      expect(res.status).toBe(200);
+      const jsonStr = JSON.stringify(res.body.data);
+      expect(jsonStr).not.toContain('Updated Title');
+      expect(jsonStr).not.toContain('Explore Collection');
+    });
+
+    it('should remove stale heroSlides containing "Updated Title"', async () => {
+      await HomepageSetting.updateOne(
+        {},
+        {
+          $set: {
+            heroSlides: [
+              { title: 'Updated Title', subtitle: 'Explore Collection', image: 'https://placehold.co/600x600', link: '/shop', isActive: true, sortOrder: 0 },
+              { title: 'Valid Slide', subtitle: 'Valid Subtitle', image: 'https://placehold.co/600x600', link: '/shop', isActive: true, sortOrder: 1 },
+            ],
+          },
+        },
+        { upsert: true }
+      );
+
+      await request(app)
+        .put('/api/content/homepage/settings')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          heroSlides: [
+            { title: 'Valid Slide', subtitle: 'Valid Subtitle', image: 'https://placehold.co/600x600', link: '/shop', isActive: true, sortOrder: 0 },
+          ],
+        });
+
+      const res = await request(app)
+        .get('/api/content/homepage/settings');
+
+      const jsonStr = JSON.stringify(res.body.data);
+      expect(jsonStr).not.toContain('Updated Title');
+      expect(jsonStr).not.toContain('Explore Collection');
+      expect(res.body.data.heroSlides.length).toBe(1);
+      expect(res.body.data.heroSlides[0].title).toBe('Valid Slide');
+    });
+  });
 });

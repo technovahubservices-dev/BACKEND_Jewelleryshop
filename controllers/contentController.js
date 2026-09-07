@@ -542,6 +542,72 @@ const uploadImage = asyncHandler(async (req, res) => {
   });
 });
 
+const ensureString = (value) => {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value.toString === 'function' && value.toString !== Object.prototype.toString) {
+    try {
+      return value.toString();
+    } catch (e) {
+      return String(value);
+    }
+  }
+  return String(value);
+};
+
+const ensureNumber = (value, fallback = 0) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+const ensureBoolean = (value, fallback = true) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    return value === 'true' || value === '1';
+  }
+  return fallback;
+};
+
+const normalizeVideoReelInput = (body) => {
+  const result = {};
+
+  if (body.title !== undefined && body.title !== null) {
+    if (typeof body.title === 'object') {
+      throw new Error('title must be a string value');
+    }
+    result.title = ensureString(body.title);
+  }
+
+  if (body.thumbnail !== undefined && body.thumbnail !== null) {
+    if (typeof body.thumbnail === 'object') {
+      throw new Error('thumbnail must be a string value');
+    }
+    result.thumbnail = ensureString(body.thumbnail);
+  }
+
+  if (body.shopLink !== undefined && body.shopLink !== null) {
+    if (typeof body.shopLink === 'object') {
+      throw new Error('shopLink must be a string value');
+    }
+    result.shopLink = ensureString(body.shopLink);
+  }
+
+  if (body.price !== undefined && body.price !== null) {
+    result.price = String(body.price);
+  }
+
+  if (body.isActive !== undefined) {
+    result.isActive = ensureBoolean(body.isActive, true);
+  }
+
+  if (body.sortOrder !== undefined) {
+    const parsed = parseInt(body.sortOrder, 10);
+    result.sortOrder = Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  return result;
+};
+
 const VIDEO_MIME_TYPES = ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska'];
 const VIDEO_EXT_RE = /mp4|webm|ogg|mov|avi|mkv/;
 
@@ -580,25 +646,33 @@ const uploadVideoReel = asyncHandler(async (req, res) => {
 
   const settings = await mongoose.model('HomepageSetting').getSettings();
 
-  const maxOrder = await mongoose.model('HomepageSetting').findOne({})
-    .sort('-videoReels.sortOrder')
-    .select('videoReels.sortOrder');
+  const maxOrder = settings.videoReels.length > 0
+    ? Math.max(...settings.videoReels.map((r) => (r.sortOrder != null ? r.sortOrder : 0))) + 1
+    : 0;
 
-  const newSortOrder = (maxOrder?.videoReels?.[0]?.sortOrder ?? -1) + 1;
+  let normalized;
+  try {
+    normalized = normalizeVideoReelInput(req.body);
+  } catch (err) {
+    return res.status(400).json({
+      success: false,
+      message: err.message,
+    });
+  }
 
-  const newReel = {
-    title: req.body.title || '',
+   const newReel = {
+    title: normalized.title !== undefined ? normalized.title : '',
     videoUrl,
     videoMetadata: {
       driveFileId: driveFile.id,
       originalName: uploadedFile.originalname,
       mimeType: driveFile.mimeType,
     },
-    thumbnail: req.body.thumbnail || '',
-    price: req.body.price || '',
-    shopLink: req.body.shopLink || '',
-    isActive: req.body.isActive !== undefined ? (req.body.isActive === true || req.body.isActive === 'true') : true,
-    sortOrder: parseInt(req.body.sortOrder, 10) || newSortOrder,
+     thumbnail: normalized.thumbnail !== undefined ? normalized.thumbnail : '',
+    price: normalized.price !== undefined ? normalized.price : '',
+    shopLink: normalized.shopLink !== undefined ? normalized.shopLink : '',
+    isActive: normalized.isActive !== undefined ? normalized.isActive : true,
+    sortOrder: normalized.sortOrder !== undefined ? normalized.sortOrder : maxOrder,
   };
 
   settings.videoReels.push(newReel);
@@ -676,23 +750,33 @@ const updateVideoReel = asyncHandler(async (req, res) => {
     settings.videoReels[reelIndex].videoMetadata = newVideoMetadata;
   }
 
-  if (req.body.title !== undefined) {
-    settings.videoReels[reelIndex].title = req.body.title;
+  let normalized;
+  try {
+    normalized = normalizeVideoReelInput(req.body);
+  } catch (err) {
+    return res.status(400).json({
+      success: false,
+      message: err.message,
+    });
   }
-  if (req.body.thumbnail !== undefined) {
-    settings.videoReels[reelIndex].thumbnail = req.body.thumbnail;
+
+  if (normalized.title !== undefined) {
+    settings.videoReels[reelIndex].title = normalized.title;
   }
-  if (req.body.price !== undefined) {
-    settings.videoReels[reelIndex].price = req.body.price;
+  if (normalized.thumbnail !== undefined) {
+    settings.videoReels[reelIndex].thumbnail = normalized.thumbnail;
   }
-  if (req.body.shopLink !== undefined) {
-    settings.videoReels[reelIndex].shopLink = req.body.shopLink;
+  if (normalized.price !== undefined) {
+    settings.videoReels[reelIndex].price = normalized.price;
   }
-  if (req.body.isActive !== undefined) {
-    settings.videoReels[reelIndex].isActive = req.body.isActive === true || req.body.isActive === 'true';
+  if (normalized.shopLink !== undefined) {
+    settings.videoReels[reelIndex].shopLink = normalized.shopLink;
   }
-  if (req.body.sortOrder !== undefined) {
-    settings.videoReels[reelIndex].sortOrder = parseInt(req.body.sortOrder, 10);
+   if ('isActive' in normalized) {
+    settings.videoReels[reelIndex].isActive = normalized.isActive;
+  }
+  if (normalized.sortOrder !== undefined) {
+    settings.videoReels[reelIndex].sortOrder = normalized.sortOrder;
   }
 
   const videoChanged = newVideoUrl !== oldVideoUrl;

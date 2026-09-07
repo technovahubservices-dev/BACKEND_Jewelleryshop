@@ -35,11 +35,13 @@ const homepageSettingSchema = mongoose.Schema(
       type: String,
       trim: true,
       maxlength: [200, 'Title cannot exceed 200 characters'],
+      default: 'Where Tradition Meets Elegance',
     },
     heroSectionSubtitle: {
       type: String,
       trim: true,
       maxlength: [500, 'Subtitle cannot exceed 500 characters'],
+      default: 'Timeless jewellery crafted for every moment',
     },
     heroSectionDescription: {
       type: String,
