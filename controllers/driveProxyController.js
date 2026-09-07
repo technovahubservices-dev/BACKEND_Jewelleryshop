@@ -1,4 +1,5 @@
 const path = require('path');
+const { Readable } = require('stream');
 const { getGoogleDriveFileId } = require('../utils/googleDriveStorage');
 
 const IMAGE_MIME_TYPES = {
@@ -36,7 +37,7 @@ const getMimeType = (mimeType, isVideo = false) => {
   return IMAGE_MIME_TYPES[mimeType] || mimeType;
 };
 
-const streamDriveFile = (req, res, driveStream, mimeType, contentLength) => {
+const streamDriveFile = (req, res, driveResponse, mimeType, contentLength) => {
   const origin = req.headers.origin;
   if (origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
@@ -47,6 +48,8 @@ const streamDriveFile = (req, res, driveStream, mimeType, contentLength) => {
     res.setHeader('Content-Length', contentLength);
   }
   res.setHeader('Cache-Control', 'public, max-age=86400');
+  const driveStream = Readable.fromWeb(driveResponse.body);
+
   driveStream.on('error', (err) => {
     if (!res.headersSent) {
       res.status(500).send('Error streaming file');
@@ -145,3 +148,4 @@ const getDriveMedia = async (req, res, next) => {
 };
 
 module.exports = { getDriveMedia };
+
