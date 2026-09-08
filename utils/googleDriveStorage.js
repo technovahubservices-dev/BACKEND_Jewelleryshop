@@ -43,8 +43,15 @@ const driveError = (message) => {
 const getGoogleDriveFileId = (url) => {
   if (!url || typeof url !== 'string') return null;
 
+  let normalizedUrl = url.trim();
+
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(normalizedUrl) &&
+      !normalizedUrl.startsWith('/')) {
+    normalizedUrl = `https://${normalizedUrl}`;
+  }
+
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(normalizedUrl);
     if (!parsed.hostname.toLowerCase().includes('google.com')) return null;
 
     return parsed.searchParams.get('id')
@@ -72,7 +79,16 @@ const normalizeGoogleDriveUrl = (url) => {
     if (/^[a-zA-Z0-9_-]{20,}$/.test(trimmed)) {
       return buildProxyMediaUrl(trimmed);
     }
-    return url;
+    if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed) &&
+        !trimmed.startsWith('/')) {
+      try {
+        parsed = new URL(`https://${trimmed}`);
+      } catch (retryError) {
+        return url;
+      }
+    } else {
+      return url;
+    }
   }
 
   const host = parsed.hostname.toLowerCase();

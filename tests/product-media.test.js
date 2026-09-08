@@ -23,7 +23,13 @@ const createAdminUser = async (email, password) => {
 
 describe('Sprint 2 - Product Media, Search, Filter, Sort, Related, Recently Viewed', () => {
   beforeAll(connect);
-  afterAll(close);
+  afterAll(async () => {
+    await Product.deleteMany({});
+    await Wishlist.deleteMany({});
+    await Cart.deleteMany({});
+    await Order.deleteMany({});
+    await close();
+  });
 
   let adminToken;
   let userToken;
@@ -66,13 +72,6 @@ describe('Sprint 2 - Product Media, Search, Filter, Sort, Related, Recently View
     await Cart.deleteMany({});
     await Order.deleteMany({});
     await User.updateMany({}, { $set: { recentlyViewed: [] } });
-  });
-
-  afterAll(async () => {
-    await Product.deleteMany({});
-    await Wishlist.deleteMany({});
-    await Cart.deleteMany({});
-    await Order.deleteMany({});
   });
 
   const seedProducts = async () => {

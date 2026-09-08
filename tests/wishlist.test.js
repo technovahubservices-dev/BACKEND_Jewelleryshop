@@ -23,7 +23,13 @@ const createAdminUser = async (email, password) => {
 
 describe('Sprint 2 - Wishlist', () => {
   beforeAll(connect);
-  afterAll(close);
+  afterAll(async () => {
+    await Product.deleteMany({});
+    await Wishlist.deleteMany({});
+    await Cart.deleteMany({});
+    await Order.deleteMany({});
+    await close();
+  });
 
   let adminToken;
   let userToken;
@@ -92,13 +98,6 @@ describe('Sprint 2 - Wishlist', () => {
 
   afterEach(async () => {
     await Wishlist.deleteMany({});
-  });
-
-  afterAll(async () => {
-    await Product.deleteMany({});
-    await Wishlist.deleteMany({});
-    await Cart.deleteMany({});
-    await Order.deleteMany({});
   });
 
   describe('GET /api/wishlist', () => {

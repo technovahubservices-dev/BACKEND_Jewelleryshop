@@ -17,13 +17,18 @@ const normalizeImage = (img, index) => {
     };
   }
   if (typeof img === 'object' && img !== null) {
+    const rawUrl = img.url
+      || img.imageUrl
+      || img.src
+      || img.path
+      || '';
     return {
-      url: normalizeGoogleDriveUrl(img.url || ''),
-      alt: img.alt || '',
+      url: normalizeGoogleDriveUrl(rawUrl),
+      alt: img.alt || img.title || '',
       order: img.order !== undefined ? img.order : index,
     };
   }
-  return { url: normalizeGoogleDriveUrl(img), alt: '', order: index };
+  return { url: '', alt: '', order: index };
 };
 
 const extractImageUrl = (img) => {
