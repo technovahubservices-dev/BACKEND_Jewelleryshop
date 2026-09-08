@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 
 exports.createOrder = asyncHandler(async (req, res) => {
-  const { items, shippingAddress, paymentMethod, itemsPrice, taxPrice, shippingPrice, totalPrice, idempotencyKey } = req.body;
+  const { items, shippingAddress, paymentMethod, itemsPrice, taxPrice, shippingPrice, totalPrice, discount, idempotencyKey } = req.body;
 
   if (idempotencyKey) {
     const existingOrder = await Order.findOne({ idempotencyKey });
@@ -33,6 +33,8 @@ exports.createOrder = asyncHandler(async (req, res) => {
   }
 
   const orderItems = [];
+  let calculatedItemsPrice = 0;
+
   for (const item of items) {
     if (!item.product || !mongoose.Types.ObjectId.isValid(item.product)) {
       return res.status(400).json({
@@ -49,12 +51,26 @@ exports.createOrder = asyncHandler(async (req, res) => {
       });
     }
 
+    if (product.stock < item.quantity) {
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient stock for ${product.name}. Available: ${product.stock}, Requested: ${item.quantity}`,
+      });
+    }
+
+    const price = product.discountPrice && product.discountPrice > 0
+      ? product.discountPrice
+      : product.price;
+
+    const lineTotal = price * item.quantity;
+    calculatedItemsPrice += lineTotal;
+
     orderItems.push({
       product: product._id,
       name: item.name || product.name,
       image: item.image || product.primaryImage || (product.images && product.images[0]) || '',
-      price: item.price || product.price,
-      quantity: item.quantity || 1,
+      price: price,
+      quantity: item.quantity,
     });
   }
 
@@ -63,16 +79,18 @@ exports.createOrder = asyncHandler(async (req, res) => {
     : undefined;
 
   const isPrepaid = paymentMethod && paymentMethod !== 'cod';
+  const calculatedTotalPrice = calculatedItemsPrice + (Number(taxPrice) || 0) + (Number(shippingPrice) || 0) - (Number(discount) || 0);
 
   const order = await Order.create({
     user: userId,
     items: orderItems,
     shippingAddress,
     paymentMethod: paymentMethod || 'cod',
-    itemsPrice: itemsPrice || 0,
-    taxPrice: taxPrice || 0,
-    shippingPrice: shippingPrice || 0,
-    totalPrice: totalPrice || 0,
+    itemsPrice: calculatedItemsPrice,
+    taxPrice: Number(taxPrice) || 0,
+    shippingPrice: Number(shippingPrice) || 0,
+    discount: Number(discount) || 0,
+    totalPrice: calculatedTotalPrice,
     isPaid: false,
     status: isPrepaid ? 'pending_payment' : 'new',
     paymentStatus: 'pending',
