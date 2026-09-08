@@ -145,7 +145,8 @@ describe('CMS Upload/Save — With Image Upload', () => {
 
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.images).toContain('https://example.com/ring.jpg');
+      expect(res.body.data.images).toHaveLength(1);
+      expect(res.body.data.images[0].url).toBe('https://example.com/ring.jpg');
     });
   });
 

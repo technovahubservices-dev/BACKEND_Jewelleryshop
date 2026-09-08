@@ -1,10 +1,37 @@
 const Product = require('../models/Product');
+const User = require('../models/User');
+const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const {
   deleteDriveFilesForUrls,
   normalizeGoogleDriveUrl,
   uploadRequestFilesToGoogleDrive,
 } = require('../utils/googleDriveStorage');
+
+const normalizeImage = (img, index) => {
+  if (typeof img === 'string') {
+    return {
+      url: normalizeGoogleDriveUrl(img),
+      alt: '',
+      order: index,
+    };
+  }
+  if (typeof img === 'object' && img !== null) {
+    return {
+      url: normalizeGoogleDriveUrl(img.url || ''),
+      alt: img.alt || '',
+      order: img.order !== undefined ? img.order : index,
+    };
+  }
+  return { url: normalizeGoogleDriveUrl(img), alt: '', order: index };
+};
+
+const extractImageUrl = (img) => {
+  if (!img) return '';
+  if (typeof img === 'string') return img;
+  if (typeof img === 'object' && img !== null) return img.url || '';
+  return '';
+};
 
 const normalizeProductImages = (product) => {
   const plainProduct = typeof product?.toObject === 'function'
@@ -16,12 +43,31 @@ const normalizeProductImages = (product) => {
   }
 
   if (Array.isArray(plainProduct.images)) {
-    plainProduct.images = plainProduct.images.map(normalizeGoogleDriveUrl);
+    plainProduct.images = plainProduct.images.map((img, index) =>
+      normalizeImage(img, index)
+    );
+    plainProduct.images.sort((a, b) => (a.order || 0) - (b.order || 0));
   }
 
   if (plainProduct.primaryImage) {
     plainProduct.primaryImage = normalizeGoogleDriveUrl(plainProduct.primaryImage);
   }
+
+  if (plainProduct.productVideoUrl) {
+    plainProduct.productVideoUrl = normalizeGoogleDriveUrl(plainProduct.productVideoUrl);
+  }
+
+  if (plainProduct.productVideoThumbnail) {
+    plainProduct.productVideoThumbnail = normalizeGoogleDriveUrl(plainProduct.productVideoThumbnail);
+  }
+
+  return plainProduct;
+};
+
+const normalizeProductListing = (product) => {
+  const plainProduct = normalizeProductImages(product);
+
+  delete plainProduct.description;
 
   return plainProduct;
 };
@@ -101,6 +147,8 @@ exports.createProduct = async (req, res) => {
       diamondShape,
       diamondClarity,
       diamondColor,
+      productVideoUrl,
+      productVideoThumbnail,
       tags,
       status,
       isFeatured,
@@ -169,7 +217,8 @@ exports.createProduct = async (req, res) => {
     }
 
     if (imageUrls.length > 0) {
-      const invalidUrl = imageUrls.some((url) => {
+      const invalidUrl = imageUrls.some((img) => {
+        const url = extractImageUrl(img);
         if (!url || typeof url !== 'string') return true;
         return !url.startsWith('/') && !url.startsWith('http://') && !url.startsWith('https://');
       });
@@ -181,7 +230,19 @@ exports.createProduct = async (req, res) => {
       }
     }
 
-    const normalizedImageUrls = imageUrls.map(normalizeGoogleDriveUrl);
+    const normalizedImageUrls = imageUrls.map((img) => {
+      if (typeof img === 'string') {
+        return normalizeGoogleDriveUrl(img);
+      }
+      if (typeof img === 'object' && img !== null) {
+        return {
+          url: normalizeGoogleDriveUrl(img.url || ''),
+          alt: img.alt || '',
+          order: img.order !== undefined ? img.order : 0,
+        };
+      }
+      return img;
+    });
     const images = [...normalizedImageUrls, ...uploadedFiles];
 
     if (images.length === 0) {
@@ -205,7 +266,7 @@ exports.createProduct = async (req, res) => {
         .filter((t) => t);
     }
 
-    const primaryImage = images[0];
+    const primaryImage = extractImageUrl(images[0]);
 
     const productData = {
       name: name.trim(),
@@ -214,6 +275,8 @@ exports.createProduct = async (req, res) => {
       description: description || undefined,
       images,
       primaryImage,
+      productVideoUrl: productVideoUrl || '',
+      productVideoThumbnail: productVideoThumbnail || '',
       tags: parsedTags || [],
       status: status || 'active',
       isFeatured: isFeatured === true || isFeatured === 'true' || isFeatured === 1,
@@ -302,7 +365,30 @@ exports.checkSkuAvailability = asyncHandler(async (req, res) => {
 
 exports.getProducts = async (req, res) => {
   try {
-    const { search, category, status, sort, page = 1, limit = 20 } = req.query;
+    const {
+      search,
+      category,
+      subcategory,
+      collection,
+      jewelleryCollection,
+      metal,
+      purity,
+      status,
+      minPrice,
+      maxPrice,
+      inStock,
+      isFeatured,
+      isBestSeller,
+      isNewArrival,
+      discount,
+      diamondShape,
+      diamondClarity,
+      diamondColor,
+      sort = '-createdAt',
+      page = 1,
+      limit = 20,
+      fields,
+    } = req.query;
 
     const query = {};
 
@@ -311,6 +397,9 @@ exports.getProducts = async (req, res) => {
         { name: { $regex: search, $options: 'i' } },
         { sku: { $regex: search, $options: 'i' } },
         { description: { $regex: search, $options: 'i' } },
+        { tags: { $in: [new RegExp(search, 'i')] } },
+        { subcategory: { $regex: search, $options: 'i' } },
+        { jewelleryCollection: { $regex: search, $options: 'i' } },
       ];
     }
 
@@ -322,22 +411,127 @@ exports.getProducts = async (req, res) => {
       }
     }
 
+    if (subcategory) {
+      query.subcategory = String(subcategory);
+    }
+
+    if (collection || jewelleryCollection) {
+      const col = collection || jewelleryCollection;
+      if (col) {
+        const trimmedCol = String(col).trim();
+        if (trimmedCol) {
+          query.jewelleryCollection = trimmedCol;
+        }
+      }
+    }
+
+    if (metal) {
+      query.metal = String(metal);
+    }
+
+    if (purity) {
+      query.purity = String(purity);
+    }
+
+    if (diamondShape) {
+      query.diamondShape = String(diamondShape);
+    }
+
+    if (diamondClarity) {
+      query.diamondClarity = String(diamondClarity);
+    }
+
+    if (diamondColor) {
+      query.diamondColor = String(diamondColor);
+    }
+
     if (status) {
-      query.status = status;
+      query.status = String(status);
+    } else {
+      query.status = 'active';
+    }
+
+    if (minPrice !== undefined && minPrice !== '') {
+      const min = parseFloat(minPrice);
+      if (!isNaN(min)) {
+        query.$and = query.$and || [];
+        query.$and.push({
+          $or: [
+            { discountPrice: { $gt: 0, $gte: min } },
+            { discountPrice: { $lte: 0 }, price: { $gte: min } },
+          ],
+        });
+      }
+    }
+
+    if (maxPrice !== undefined && maxPrice !== '') {
+      const max = parseFloat(maxPrice);
+      if (!isNaN(max)) {
+        query.$and = query.$and || [];
+        query.$and.push({
+          $or: [
+            { discountPrice: { $gt: 0, $lte: max } },
+            { discountPrice: { $lte: 0 }, price: { $lte: max } },
+          ],
+        });
+      }
+    }
+
+    if (inStock === 'true' || inStock === true) {
+      query.stock = { $gt: 0 };
+    }
+
+    if (isFeatured === 'true' || isFeatured === true) {
+      query.isFeatured = true;
+    }
+
+    if (isBestSeller === 'true' || isBestSeller === true) {
+      query.isBestSeller = true;
+    }
+
+    if (isNewArrival === 'true' || isNewArrival === true) {
+      query.isNewArrival = true;
+    }
+
+    if (discount === 'true' || discount === true) {
+      query.discountPrice = { $gt: 0 };
     }
 
     let productsQuery = Product.find(query);
 
-    if (sort) {
-      const sortBy = sort.startsWith('-') ? sort.substring(1) : sort;
-      const sortOrder = sort.startsWith('-') ? -1 : 1;
-      productsQuery = productsQuery.sort({ [sortBy]: sortOrder });
+    if (fields) {
+      const fieldList = String(fields).split(',').map((f) => f.trim()).filter(Boolean);
+      productsQuery = productsQuery.select(fieldList.join(' '));
+    } else {
+      productsQuery = productsQuery.select('-description');
+    }
+
+    const validSortFields = [
+      'price',
+      '-price',
+      'name',
+      '-name',
+      'rating',
+      '-rating',
+      'createdAt',
+      '-createdAt',
+      '_id',
+      '-_id',
+      'discountPrice',
+      '-discountPrice',
+    ];
+
+    if (validSortFields.includes(sort)) {
+      productsQuery = productsQuery.sort(sort);
     } else {
       productsQuery = productsQuery.sort({ createdAt: -1 });
     }
 
-    const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
-    productsQuery = productsQuery.skip(skip).limit(parseInt(limit, 10));
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    productsQuery = productsQuery.skip(skip).limit(limitNum);
 
     const products = await productsQuery.exec();
     const normalizedProducts = products.map(normalizeProductImages);
@@ -348,8 +542,8 @@ exports.getProducts = async (req, res) => {
       success: true,
       count: normalizedProducts.length,
       total,
-      page: parseInt(page, 10),
-      pages: Math.ceil(total / parseInt(limit, 10)),
+      page: pageNum,
+      pages: Math.ceil(total / limitNum),
       data: normalizedProducts,
     });
   } catch (error) {
@@ -363,6 +557,13 @@ exports.getProducts = async (req, res) => {
 
 exports.getProduct = async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid product ID',
+      });
+    }
+
     const product = await Product.findById(req.params.id);
 
     if (!product) {
@@ -370,6 +571,33 @@ exports.getProduct = async (req, res) => {
         success: false,
         message: 'Product not found',
       });
+    }
+
+    if (req.user) {
+      try {
+        const existingIndex = req.user.recentlyViewed.findIndex(
+          (item) => item.product.toString() === product._id.toString()
+        );
+
+        if (existingIndex > -1) {
+          req.user.recentlyViewed.splice(existingIndex, 1);
+        }
+
+        req.user.recentlyViewed.unshift({
+          product: product._id,
+          viewedAt: new Date(),
+        });
+
+        if (req.user.recentlyViewed.length > 20) {
+          req.user.recentlyViewed = req.user.recentlyViewed.slice(0, 20);
+        }
+
+        await User.findByIdAndUpdate(req.user._id, {
+          $set: { recentlyViewed: req.user.recentlyViewed },
+        });
+      } catch (trackErr) {
+        console.error('Recently viewed tracking error:', trackErr);
+      }
     }
 
     res.status(200).json({
@@ -426,6 +654,8 @@ exports.updateProduct = async (req, res) => {
       diamondClarity,
       diamondColor,
       imageUrls,
+      productVideoUrl,
+      productVideoThumbnail,
       tags,
       status,
       isFeatured,
@@ -480,10 +710,10 @@ exports.updateProduct = async (req, res) => {
           }
         }
       } else if (Array.isArray(imageUrls)) {
-        newImageUrls = imageUrls;
+        newImageUrls = imageUrls.map(extractImageUrl);
       }
     } else {
-      newImageUrls = [...(product.images || [])];
+      newImageUrls = (product.images || []).map(extractImageUrl);
     }
 
     const normalizedNewImageUrls = newImageUrls.map(normalizeGoogleDriveUrl);
@@ -491,7 +721,6 @@ exports.updateProduct = async (req, res) => {
     if (uploadedFiles.length > 0) {
       images = [...images, ...uploadedFiles];
     }
-    images = images.map(normalizeGoogleDriveUrl);
 
     if (!images || images.length === 0) {
       return res.status(400).json({
@@ -536,18 +765,18 @@ exports.updateProduct = async (req, res) => {
     if (newImageUrls.length > 0 || uploadedFiles.length > 0) {
       const imagesSet = new Set(images.map(normalizeGoogleDriveUrl));
       const removableUrls = oldImageUrls.filter(
-        (url) => url && !imagesSet.has(normalizeGoogleDriveUrl(url))
+        (url) => url && !imagesSet.has(normalizeGoogleDriveUrl(extractImageUrl(url)))
       );
 
       if (removableUrls.length > 0) {
         await deleteDriveFilesForUrls({
           userId: req.user._id,
-          urls: removableUrls,
+          urls: removableUrls.map(extractImageUrl),
         });
       }
 
       product.images = images;
-      product.primaryImage = images[0];
+      product.primaryImage = extractImageUrl(images[0]);
     }
     if (parsedTags) product.tags = parsedTags;
     if (status) product.status = status;
@@ -557,6 +786,8 @@ exports.updateProduct = async (req, res) => {
       isBestSeller === true || isBestSeller === 'true' || isBestSeller === 1;
     product.isNewArrival =
       isNewArrival === true || isNewArrival === 'true' || isNewArrival === 1;
+    if (productVideoUrl !== undefined) product.productVideoUrl = productVideoUrl;
+    if (productVideoThumbnail !== undefined) product.productVideoThumbnail = productVideoThumbnail;
 
     await product.save();
     const responseProduct = normalizeProductImages(product);
@@ -825,3 +1056,106 @@ exports.seedProducts = async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to seed products' });
   }
 };
+
+exports.getRelatedProducts = asyncHandler(async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid product ID',
+      });
+    }
+
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found',
+      });
+    }
+
+    const limit = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 8));
+
+    const relatedProducts = await Product.find({
+      _id: { $ne: product._id },
+      status: 'active',
+      $or: [
+        { category: product.category },
+        ...(product.subcategory ? [{ subcategory: product.subcategory }] : []),
+        ...(product.jewelleryCollection
+          ? [{ jewelleryCollection: product.jewelleryCollection }]
+          : []),
+        ...(product.metal ? [{ metal: product.metal }] : []),
+      ],
+    })
+      .sort({ rating: -1, createdAt: -1 })
+      .limit(limit);
+
+    const normalized = relatedProducts.map(normalizeProductImages);
+
+    res.status(200).json({
+      success: true,
+      count: normalized.length,
+      data: normalized,
+    });
+  } catch (error) {
+    console.error('Get related products error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch related products',
+    });
+  }
+});
+
+exports.getRecentlyViewed = asyncHandler(async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('recentlyViewed');
+
+    if (!user || !user.recentlyViewed || user.recentlyViewed.length === 0) {
+      return res.status(200).json({
+        success: true,
+        count: 0,
+        data: [],
+      });
+    }
+
+    const productIds = user.recentlyViewed.map((item) => item.product);
+
+    let products = await Product.find({
+      _id: { $in: productIds },
+    }).select('-description');
+
+    const viewedMap = {};
+    user.recentlyViewed.forEach((item) => {
+      viewedMap[item.product.toString()] = item.viewedAt;
+    });
+
+    products = products.sort((a, b) => {
+      const aTime = viewedMap[a._id.toString()] || a.createdAt;
+      const bTime = viewedMap[b._id.toString()] || b.createdAt;
+      return new Date(bTime) - new Date(aTime);
+    });
+
+    await User.findByIdAndUpdate(req.user._id, {
+      $pull: {
+        recentlyViewed: {
+          product: { $nin: products.map((p) => p._id) },
+        },
+      },
+    });
+
+    const normalized = products.map(normalizeProductImages);
+
+    res.status(200).json({
+      success: true,
+      count: normalized.length,
+      data: normalized,
+    });
+  } catch (error) {
+    console.error('Get recently viewed error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch recently viewed products',
+    });
+  }
+});

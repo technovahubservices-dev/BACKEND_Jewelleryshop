@@ -24,6 +24,19 @@ const userSchema = mongoose.Schema(
       type: String,
       default: '',
     },
+    recentlyViewed: [
+      {
+        product: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'Product',
+          required: true,
+        },
+        viewedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
     addresses: [
       {
         _id: { type: mongoose.Schema.Types.ObjectId, auto: true },

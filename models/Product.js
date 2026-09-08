@@ -121,13 +121,16 @@ const productSchema = mongoose.Schema(
       type: String,
       enum: ['D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'GHI', 'DEF', 'SI', 'N/A'],
     },
-    images: [
-      {
-        type: String,
-        required: true,
-      },
-    ],
+    images: [mongoose.Schema.Types.Mixed],
     primaryImage: {
+      type: String,
+      default: '',
+    },
+    productVideoUrl: {
+      type: String,
+      default: '',
+    },
+    productVideoThumbnail: {
       type: String,
       default: '',
     },
@@ -192,8 +195,28 @@ productSchema.pre('save', function (next) {
       .replace(/[^a-zA-Z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '');
   }
+
+  if (this.isModified('images') && Array.isArray(this.images) && this.images.length > 0) {
+    this.images = this.images.map((img, index) => {
+      if (typeof img === 'string') {
+        return { url: img, alt: '', order: index };
+      }
+      if (typeof img === 'object' && img !== null) {
+        return {
+          url: img.url || '',
+          alt: img.alt || '',
+          order: img.order !== undefined ? img.order : index,
+        };
+      }
+      return { url: '', alt: '', order: index };
+    });
+
+    this.images.sort((a, b) => (a.order || 0) - (b.order || 0));
+  }
+
   if (this.images && this.images.length > 0 && !this.primaryImage) {
-    this.primaryImage = this.images[0];
+    const firstImage = this.images[0];
+    this.primaryImage = typeof firstImage === 'string' ? firstImage : (firstImage.url || '');
   }
   next();
 });

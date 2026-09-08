@@ -9,21 +9,27 @@ const {
   deleteProduct,
   seedProducts,
   checkSkuAvailability,
+  getRelatedProducts,
+  getRecentlyViewed,
 } = require('../controllers/productController');
-const { protect, admin } = require('../middleware/authMiddleware');
+const { protect, admin, optionalProtect } = require('../middleware/authMiddleware');
 
 router.route('/')
     .get(getProducts)
     .post(protect, admin, uploadImageMemory.array('images', 10), createProduct);
 
 router.get('/check-sku', checkSkuAvailability);
+router.get('/recently-viewed', protect, getRecentlyViewed);
 
 router.post('/seed', protect, admin, seedProducts);
 
 router.route('/:id')
-  .get(getProduct)
+  .get(optionalProtect, getProduct)
   .put(protect, admin, uploadImageMemory.array('images', 10), updateProduct)
   .delete(protect, admin, deleteProduct);
+
+router.route('/:id/related')
+  .get(getRelatedProducts);
 
 // Multer upload error handler — MUST be registered after routes so it can
 // intercept multer errors thrown by the inline upload middleware. Without this

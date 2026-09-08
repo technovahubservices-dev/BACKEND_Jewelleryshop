@@ -56,4 +56,26 @@ const admin = (req, res, next) => {
   }
 };
 
-module.exports = { protect, admin };
+const optionalProtect = asyncHandler(async (req, res, next) => {
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith('Bearer')
+  ) {
+    try {
+      const token = req.headers.authorization.split(' ')[1];
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+      if (mongoose.Types.ObjectId.isValid(decoded.id)) {
+        const user = await User.findById(decoded.id).select('-password');
+        if (user) {
+          req.user = user;
+        }
+      }
+    } catch (error) {
+      // Ignore auth errors for optional auth — proceed as anonymous
+    }
+  }
+  next();
+});
+
+module.exports = { protect, admin, optionalProtect };
