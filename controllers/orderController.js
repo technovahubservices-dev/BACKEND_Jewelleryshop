@@ -2,6 +2,88 @@ const Order = require('../models/Order');
 const Product = require('../models/Product');
 const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
+const { streamInvoiceToResponse } = require('../services/invoiceService');
+const { sendOrderConfirmationEmail, sendOrderStatusNotificationEmail } = require('../services/mailer');
+
+const ORDER_POPULATE = [
+  { path: 'user', select: 'name email phone' },
+  { path: 'items.product' },
+  { path: 'quotationId', select: 'quotationNumber status' },
+];
+
+const buildOrderResponse = (order) => {
+  const plain = typeof order?.toObject === 'function'
+    ? order.toObject()
+    : { ...order };
+
+  const items = (plain.items || []).map((item) => {
+    const product = typeof item.product === 'object' && item.product ? item.product : {};
+    const qty = Number(item.quantity) || 0;
+    const price = Number(item.price) || 0;
+    const discountPercent = Number(item.discount) || 0;
+    const gstPercent = Number(item.gst) || 18;
+    const gross = price * qty;
+    const discountAmount = gross * (discountPercent / 100);
+    const taxableValue = Math.max(0, gross - discountAmount);
+    const gstAmount = taxableValue * (gstPercent / 100);
+    const lineTotal = Number.isFinite(Number(item.lineTotal))
+      ? Number(item.lineTotal)
+      : (taxableValue + gstAmount);
+
+    return {
+      product: item.product,
+      name: item.name,
+      image: item.image,
+      sku: item.sku || (product && product.sku) || '',
+      price: price,
+      quantity: qty,
+      discount: discountPercent,
+      gst: gstPercent,
+      lineTotal,
+    };
+  });
+
+  return {
+    _id: plain._id,
+    orderNumber: plain.orderNumber || '',
+    invoiceNumber: plain.invoiceNumber || '',
+    user: plain.user,
+    items,
+    shippingAddress: plain.shippingAddress,
+    billingAddress: plain.billingAddress || plain.shippingAddress,
+    paymentMethod: plain.paymentMethod || 'cod',
+    itemsPrice: plain.itemsPrice || 0,
+    taxPrice: plain.taxPrice || 0,
+    shippingPrice: plain.shippingPrice || 0,
+    discount: plain.discount || 0,
+    totalPrice: plain.totalPrice || 0,
+    isPaid: plain.isPaid || false,
+    paidAt: plain.paidAt,
+    isDelivered: plain.isDelivered || false,
+    deliveredAt: plain.deliveredAt,
+    status: plain.status || 'new',
+    paymentStatus: plain.paymentStatus || 'pending',
+    shippingStatus: plain.shippingStatus || 'not_shipped',
+    trackingNumber: plain.trackingNumber || '',
+    courier: plain.courier || '',
+    shippedAt: plain.shippedAt,
+    deliveredAt: plain.deliveredAt,
+    estimatedDeliveryDate: plain.estimatedDeliveryDate,
+    statusHistory: plain.statusHistory || [],
+    quotationId: plain.quotationId,
+    paymentGateway: plain.paymentGateway,
+    createdAt: plain.createdAt,
+    updatedAt: plain.updatedAt,
+  };
+};
+
+const sendOrderEmailSafe = async (order) => {
+  try {
+    await sendOrderConfirmationEmail(order);
+  } catch (err) {
+    console.error('[orderController] Failed to send order confirmation email:', err.message);
+  }
+};
 
 exports.createOrder = asyncHandler(async (req, res) => {
   const { items, shippingAddress, paymentMethod, itemsPrice, taxPrice, shippingPrice, totalPrice, discount, idempotencyKey } = req.body;
@@ -9,11 +91,11 @@ exports.createOrder = asyncHandler(async (req, res) => {
   if (idempotencyKey) {
     const existingOrder = await Order.findOne({ idempotencyKey });
     if (existingOrder) {
-      await Order.populate(existingOrder, { path: 'items.product' });
+      await Order.populate(existingOrder, ORDER_POPULATE);
       return res.status(200).json({
         success: true,
         message: 'Order already exists',
-        data: existingOrder,
+        data: buildOrderResponse(existingOrder),
       });
     }
   }
@@ -68,9 +150,13 @@ exports.createOrder = asyncHandler(async (req, res) => {
     orderItems.push({
       product: product._id,
       name: item.name || product.name,
-      image: item.image || product.primaryImage || (product.images && product.images[0]) || '',
+      image: item.image || product.primaryImage || (product.images && product.images[0] && (typeof product.images[0] === 'string' ? product.images[0] : product.images[0].url)) || '',
+      sku: product.sku || '',
       price: price,
       quantity: item.quantity,
+      discount: item.discount || 0,
+      gst: item.gst !== undefined ? item.gst : 18,
+      lineTotal,
     });
   }
 
@@ -84,7 +170,26 @@ exports.createOrder = asyncHandler(async (req, res) => {
   const order = await Order.create({
     user: userId,
     items: orderItems,
-    shippingAddress,
+    shippingAddress: {
+      fullName: shippingAddress.fullName,
+      phone: shippingAddress.phone || '',
+      address: shippingAddress.address,
+      landmark: shippingAddress.landmark || '',
+      city: shippingAddress.city,
+      state: shippingAddress.state,
+      pincode: shippingAddress.pincode || '',
+    },
+    billingAddress: shippingAddress.billingAddress
+      ? {
+          fullName: shippingAddress.billingAddress.fullName,
+          phone: shippingAddress.billingAddress.phone || '',
+          address: shippingAddress.billingAddress.address,
+          landmark: shippingAddress.billingAddress.landmark || '',
+          city: shippingAddress.billingAddress.city,
+          state: shippingAddress.billingAddress.state,
+          pincode: shippingAddress.billingAddress.pincode || '',
+        }
+      : undefined,
     paymentMethod: paymentMethod || 'cod',
     itemsPrice: calculatedItemsPrice,
     taxPrice: Number(taxPrice) || 0,
@@ -108,20 +213,63 @@ exports.createOrder = asyncHandler(async (req, res) => {
 
   if (!isPrepaid) {
     for (const item of orderItems) {
-      const updatedProduct = await Product.findByIdAndUpdate(
-        item.product,
-        { $inc: { stock: -item.quantity } },
-        { new: true }
-      );
+      if (item.product && mongoose.Types.ObjectId.isValid(item.product)) {
+        await Product.findByIdAndUpdate(
+          item.product,
+          { $inc: { stock: -item.quantity } },
+          { new: true }
+        );
+      }
     }
   }
 
-  await Order.populate(order, { path: 'items.product' });
+  await Order.populate(order, ORDER_POPULATE);
+
+  sendOrderEmailSafe(order).catch(() => {});
 
   res.status(201).json({
     success: true,
     message: 'Order created successfully',
-    data: order,
+    data: buildOrderResponse(order),
+  });
+});
+
+exports.getMyOrders = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+  const { page = 1, limit = 10, status, sortBy = '-createdAt' } = req.query;
+
+  const query = { user: userId };
+
+  if (status) {
+    query.status = status;
+  }
+
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
+  const skip = (pageNum - 1) * limitNum;
+
+  const validSortFields = ['-createdAt', 'createdAt', '-updatedAt', 'updatedAt', '-totalPrice', 'totalPrice', '-orderNumber', 'orderNumber', 'status'];
+  const sortOption = validSortFields.includes(sortBy) ? sortBy : '-createdAt';
+
+  const [orders, total] = await Promise.all([
+    Order.find(query)
+      .sort(sortOption)
+      .skip(skip)
+      .limit(limitNum)
+      .populate(ORDER_POPULATE),
+    Order.countDocuments(query),
+  ]);
+
+  const pages = Math.ceil(total / limitNum);
+
+  res.status(200).json({
+    success: true,
+    count: orders.length,
+    total,
+    page: pageNum,
+    pages,
+    hasMore: pageNum < pages,
+    data: orders.map(buildOrderResponse),
   });
 });
 
@@ -139,7 +287,7 @@ exports.getOrders = asyncHandler(async (req, res) => {
     query.user = req.user._id;
   }
 
-  const { status, sort = '-createdAt', startDate, endDate } = req.query;
+  const { status, sort = '-createdAt', startDate, endDate, page = 1, limit = 20 } = req.query;
 
   if (status) {
     query.status = status;
@@ -155,24 +303,46 @@ exports.getOrders = asyncHandler(async (req, res) => {
     }
   }
 
-  const orders = await Order.find(query)
-    .populate('user', 'name email')
-    .populate('items.product')
-    .populate('quotationId', 'quotationNumber status')
-    .sort(sort);
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const skip = (pageNum - 1) * limitNum;
+
+  const validSortFields = ['-createdAt', 'createdAt', '-updatedAt', 'updatedAt', 'status', '-status', 'totalPrice', '-totalPrice'];
+  const sortOption = validSortFields.includes(sort) ? sort : '-createdAt';
+
+  const [orders, total] = await Promise.all([
+    Order.find(query)
+      .populate(ORDER_POPULATE)
+      .sort(sortOption)
+      .skip(skip)
+      .limit(limitNum),
+    Order.countDocuments(query),
+  ]);
+
+  const pages = Math.ceil(total / limitNum);
 
   res.status(200).json({
     success: true,
     count: orders.length,
-    data: orders,
+    total,
+    page: pageNum,
+    pages,
+    hasMore: pageNum < pages,
+    data: orders.map(buildOrderResponse),
   });
 });
 
 exports.getOrder = asyncHandler(async (req, res) => {
-  const order = await Order.findById(req.params.id)
-    .populate('user', 'name email')
-    .populate('items.product')
-    .populate('quotationId', 'quotationNumber status');
+  const orderId = req.params.id || req.params.orderId;
+
+  if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid order ID',
+    });
+  }
+
+  const order = await Order.findById(orderId).populate(ORDER_POPULATE);
 
   if (!order) {
     return res.status(404).json({
@@ -181,14 +351,7 @@ exports.getOrder = asyncHandler(async (req, res) => {
     });
   }
 
-  if (!order.user) {
-    return res.status(200).json({
-      success: true,
-      data: order,
-    });
-  }
-
-  if (req.user && (order.user._id.toString() !== req.user._id.toString()) && !req.user.isAdmin) {
+  if (req.user && order.user && order.user._id.toString() !== req.user._id.toString() && !req.user.isAdmin) {
     return res.status(403).json({
       success: false,
       message: 'Not authorized to view this order',
@@ -197,8 +360,77 @@ exports.getOrder = asyncHandler(async (req, res) => {
 
   res.status(200).json({
     success: true,
-    data: order,
+    data: buildOrderResponse(order),
   });
+});
+
+exports.getOrderInvoice = asyncHandler(async (req, res) => {
+  const orderId = req.params.id || req.params.orderId;
+
+  if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid order ID',
+    });
+  }
+
+  const order = await Order.findById(orderId).populate(ORDER_POPULATE);
+
+  if (!order) {
+    return res.status(404).json({
+      success: false,
+      message: 'Order not found',
+    });
+  }
+
+  if (req.user && order.user && order.user._id.toString() !== req.user._id.toString() && !req.user.isAdmin) {
+    return res.status(403).json({
+      success: false,
+      message: 'Not authorized to access this invoice',
+    });
+  }
+
+  await streamInvoiceToResponse(order, res);
+});
+
+exports.downloadInvoice = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid order ID',
+    });
+  }
+
+  const order = await Order.findById(id)
+    .populate('user', 'name email')
+    .populate('items.product');
+
+  if (!order) {
+    return res.status(404).json({
+      success: false,
+      message: 'Order not found',
+    });
+  }
+
+  if (req.user && (order.user && order.user._id.toString() !== req.user._id.toString()) && !req.user.isAdmin) {
+    return res.status(403).json({
+      success: false,
+      message: 'Not authorized to view this order',
+    });
+  }
+
+  try {
+    await streamInvoiceToResponse(order, res);
+  } catch (err) {
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to generate invoice',
+      });
+    }
+  }
 });
 
 exports.convertQuotationToOrder = asyncHandler(async (req, res) => {
@@ -261,8 +493,8 @@ exports.convertQuotationToOrder = asyncHandler(async (req, res) => {
     }
 
     const price = Number(item.price) || (product ? product.price : 0);
-    const discount = Number(item.discount) || 0; // percent
-    const gst = Number(item.gst) || 0;           // percent
+    const discount = Number(item.discount) || 0;
+    const gst = Number(item.gst) || 0;
 
     const gross = price * qty;
     const discountAmount = gross * (discount / 100);
@@ -277,9 +509,13 @@ exports.convertQuotationToOrder = asyncHandler(async (req, res) => {
     orderItems.push({
       product: item.product || null,
       name: item.productName || item.name || (product ? product.name : ''),
-      image: item.image || product?.primaryImage || (product?.images && product.images[0]) || '',
+      image: item.image || product?.primaryImage || (product?.images && product.images[0] && (typeof product.images[0] === 'string' ? product.images[0] : product.images[0].url)) || '',
+      sku: product?.sku || item.sku || '',
       price,
       quantity: qty,
+      discount,
+      gst,
+      lineTotal,
     });
   }
 
@@ -326,15 +562,11 @@ exports.convertQuotationToOrder = asyncHandler(async (req, res) => {
   if (!isPrepaid) {
     for (const item of orderItems) {
       if (item.product && mongoose.Types.ObjectId.isValid(item.product)) {
-        const product = await Product.findById(item.product);
-        if (product) {
-          const previousStock = product.stock;
-          const updatedProduct = await Product.findByIdAndUpdate(
-            item.product,
-            { $inc: { stock: -item.quantity } },
-            { new: true }
-          );
-        }
+        await Product.findByIdAndUpdate(
+          item.product,
+          { $inc: { stock: -item.quantity } },
+          { new: true }
+        );
       }
     }
   }
@@ -343,12 +575,73 @@ exports.convertQuotationToOrder = asyncHandler(async (req, res) => {
   quotation.orderId = order._id;
   await quotation.save();
 
-  await Order.populate(order, { path: 'items.product' });
-  await Order.populate(order, { path: 'quotationId' });
+  await Order.populate(order, ORDER_POPULATE);
+
+  sendOrderEmailSafe(order).catch(() => {});
 
   res.status(201).json({
     success: true,
     message: 'Order created from quotation successfully',
-    data: order,
+    data: buildOrderResponse(order),
+  });
+});
+
+exports.sendOrderStatusNotification = asyncHandler(async (req, res) => {
+  const orderId = req.params.id;
+  const { status, note } = req.body;
+
+  if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid order ID',
+    });
+  }
+
+  if (!status) {
+    return res.status(400).json({
+      success: false,
+      message: 'Status is required',
+    });
+  }
+
+  const order = await Order.findById(orderId).populate(ORDER_POPULATE);
+
+  if (!order) {
+    return res.status(404).json({
+      success: false,
+      message: 'Order not found',
+    });
+  }
+
+  order.status = status;
+  order.statusHistory = order.statusHistory || [];
+  order.statusHistory.push({
+    status,
+    timestamp: new Date(),
+    note: note || '',
+    updatedBy: req.user._id,
+  });
+
+  if (status === 'shipped') {
+    order.shippingStatus = 'shipped';
+    order.shippedAt = new Date();
+  } else if (status === 'delivered') {
+    order.shippingStatus = 'delivered';
+    order.deliveredAt = new Date();
+    order.isDelivered = true;
+  } else if (status === 'cancelled') {
+    order.shippingStatus = 'not_shipped';
+  }
+
+  await order.save();
+
+  sendOrderStatusNotificationEmail(order, status).catch((err) => {
+    console.error('[orderController] Failed to send status notification email:', err.message);
+  });
+
+  res.status(200).json({
+    success: true,
+    message: 'Order status updated',
+    data: buildOrderResponse(order),
   });
 });

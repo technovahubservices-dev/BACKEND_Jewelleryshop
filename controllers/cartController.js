@@ -4,6 +4,7 @@ const Product = require('../models/Product');
 const User = require('../models/User');
 const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
+const { sendOrderConfirmationEmail } = require('../services/mailer');
 
 const getProductPrice = (product) => {
   if (product.discountPrice && product.discountPrice > 0) {
@@ -88,13 +89,13 @@ const buildOrderItems = async (items) => {
     orderItems.push({
       product: product._id,
       name: item.name || product.name,
-      image:
-        item.image ||
-        product.primaryImage ||
-        (product.images && product.images[0]) ||
-        '',
+      image: item.image || item.product?.primaryImage || (product.images && product.images[0] && (typeof product.images[0] === 'string' ? product.images[0] : product.images[0].url)) || '',
+      sku: product.sku || '',
       price: price,
       quantity: item.quantity,
+      discount: 0,
+      gst: 0,
+      lineTotal,
     });
   }
 
@@ -110,7 +111,7 @@ const createOrderFromItems = async (req, items, addressInput, idempotencyKey) =>
     throw error;
   }
 
-  const { shippingAddress, shippingPrice = 0, taxPrice = 0, discount = 0, paymentMethod = 'cod' } = addressInput;
+  const { shippingAddress, billingAddress, shippingPrice = 0, taxPrice = 0, discount = 0, paymentMethod = 'cod' } = addressInput;
 
   const resolvedAddress = await resolveShippingAddress(
     req,
@@ -130,6 +131,7 @@ const createOrderFromItems = async (req, items, addressInput, idempotencyKey) =>
     user: userId,
     items: orderItems,
     shippingAddress: resolvedAddress,
+    billingAddress: billingAddress || undefined,
     paymentMethod: paymentMethod || 'cod',
     itemsPrice: calculatedItemsPrice,
     taxPrice: Number(taxPrice || 0),
@@ -163,7 +165,16 @@ const createOrderFromItems = async (req, items, addressInput, idempotencyKey) =>
     }
   }
 
-  await Order.populate(order, { path: 'items.product' });
+  await Order.populate(order, [
+    { path: 'items.product' },
+    { path: 'user', select: 'name email phone' },
+  ]);
+
+  if (order.user && req.user && order.user._id.toString() === req.user._id.toString()) {
+    sendOrderConfirmationEmail(order).catch((err) => {
+      console.error('[cartController] Failed to send order confirmation email:', err.message);
+    });
+  }
 
   return order;
 };

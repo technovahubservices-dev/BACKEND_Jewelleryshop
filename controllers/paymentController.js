@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
+const { sendOrderConfirmationEmail, sendOrderStatusNotificationEmail } = require('../services/mailer');
 
 let razorpay = null;
 
@@ -178,10 +179,24 @@ const verifyPayment = asyncHandler(async (req, res) => {
 
   await deductStockForOrder(order);
 
+  const populatedOrder = await Order.populate(order, [
+    { path: 'items.product' },
+    { path: 'user', select: 'name email phone' },
+  ]);
+
+  if (populatedOrder.user) {
+    sendOrderConfirmationEmail(populatedOrder).catch((err) => {
+      console.error('[paymentController] Failed to send order confirmation email:', err.message);
+    });
+    sendOrderStatusNotificationEmail(populatedOrder, 'confirmed').catch((err) => {
+      console.error('[paymentController] Failed to send status email:', err.message);
+    });
+  }
+
   res.status(200).json({
     success: true,
     message: 'Payment verified successfully',
-    data: order,
+    data: populatedOrder,
   });
 });
 
@@ -335,6 +350,17 @@ const handleWebhook = asyncHandler(async (req, res) => {
       await order.save();
 
       await deductStockForOrder(order);
+
+      const populatedOrder = await Order.populate(order, [
+        { path: 'items.product' },
+        { path: 'user', select: 'name email phone' },
+      ]);
+
+      if (populatedOrder.user) {
+        sendOrderConfirmationEmail(populatedOrder).catch((err) => {
+          console.error('[paymentController] Webhook: Failed to send order confirmation email:', err.message);
+        });
+      }
     }
   } else if (event.event === 'payment.failed') {
     order.paymentStatus = 'failed';

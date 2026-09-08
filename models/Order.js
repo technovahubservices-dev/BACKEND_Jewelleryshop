@@ -8,28 +8,44 @@ const orderItemSchema = mongoose.Schema({
   },
   name: { type: String, required: true },
   image: { type: String },
+  sku: { type: String, default: '' },
   price: { type: Number, required: true },
   quantity: { type: Number, required: true, default: 1 },
+  discount: { type: Number, default: 0 },
+  gst: { type: Number, default: 18 },
+  lineTotal: { type: Number, default: 0 },
 }, { _id: false });
 
-const shippingAddressSchema = mongoose.Schema({
+const addressSchema = mongoose.Schema({
   fullName: { type: String, required: true },
-  pincode: { type: String },
+  phone: { type: String, default: '' },
   address: { type: String, required: true },
   landmark: { type: String },
   city: { type: String, required: true },
   state: { type: String, required: true },
+  pincode: { type: String },
 }, { _id: false });
 
 const orderSchema = mongoose.Schema(
   {
+    orderNumber: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+    invoiceNumber: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: false,
     },
     items: [orderItemSchema],
-    shippingAddress: shippingAddressSchema,
+    shippingAddress: addressSchema,
+    billingAddress: addressSchema,
     paymentMethod: {
       type: String,
       enum: ['cod', 'upi', 'card', 'net_banking'],
@@ -72,6 +88,16 @@ const orderSchema = mongoose.Schema(
     trackingNumber: {
       type: String,
       default: '',
+    },
+    courier: {
+      type: String,
+      default: '',
+    },
+    shippedAt: {
+      type: Date,
+    },
+    estimatedDeliveryDate: {
+      type: Date,
     },
     statusHistory: [{
       status: { type: String, required: true },
@@ -125,5 +151,31 @@ const orderSchema = mongoose.Schema(
 orderSchema.index({ user: 1 });
 orderSchema.index({ status: 1 });
 orderSchema.index({ createdAt: -1 });
+orderSchema.index({ orderNumber: 1 });
+orderSchema.index({ invoiceNumber: 1 });
+
+const OrderCounter = require('./OrderCounter');
+
+orderSchema.pre('validate', async function (next) {
+  if (!this.orderNumber) {
+    const year = new Date().getFullYear();
+    const counter = await OrderCounter.findOneAndUpdate(
+      { _id: `order-${year}` },
+      { $inc: { sequence: 1 } },
+      { new: true, upsert: true }
+    );
+    this.orderNumber = `ORD-${year}-${String(counter.sequence).padStart(6, '0')}`;
+  }
+  if (!this.invoiceNumber) {
+    const year = new Date().getFullYear();
+    const counter = await OrderCounter.findOneAndUpdate(
+      { _id: `invoice-${year}` },
+      { $inc: { sequence: 1 } },
+      { new: true, upsert: true }
+    );
+    this.invoiceNumber = `INV-${year}-${String(counter.sequence).padStart(6, '0')}`;
+  }
+  next();
+});
 
 module.exports = mongoose.model('Order', orderSchema);
