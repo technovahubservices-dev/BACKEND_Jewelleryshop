@@ -106,6 +106,7 @@ app.use('/api/content', require('./routes/contentRoutes'));
 app.use('/api/store', require('./routes/storeRoutes'));
 app.use('/api/admin/settings', require('./routes/adminSettingsRoutes'));
 app.use('/api/admin', require('./routes/adminDashboardRoutes'));
+app.use('/api/admin/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/admin/orders', require('./routes/adminOrderRoutes'));
 app.use('/api/integrations', require('./routes/googleDriveRoutes'));
 app.use('/api/contact', require('./routes/contactRoutes'));

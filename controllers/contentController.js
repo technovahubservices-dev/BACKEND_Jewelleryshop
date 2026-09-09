@@ -16,6 +16,8 @@ require('../models/PromoBanner');
 require('../models/Blog');
 require('../models/Testimonial');
 require('../models/HomepageSetting');
+require('../models/Product');
+require('../models/Category');
 
 const { computeProductPrices } = require('../utils/discountCalculator');
 
@@ -481,11 +483,14 @@ const getHomepageSettings = asyncHandler(async (req, res) => {
   const plain = typeof settings?.toObject === 'function' ? settings.toObject() : settings;
   const normalized = normalizeHomepageImageUrls(plain);
 
-  // Public API: only return active video reels. Inactive reels are hidden
+   // Public API: only return active video reels. Inactive reels are hidden
   // from the public-facing homepage but remain visible in admin endpoints.
   if (Array.isArray(normalized.videoReels)) {
     normalized.videoReels = normalized.videoReels.filter((reel) => reel.isActive !== false);
   }
+
+  // Resolve category and product references for the frontend
+  await resolveHomepageReferences(normalized);
 
   res.status(200).json({
     success: true,
@@ -496,6 +501,14 @@ const getHomepageSettings = asyncHandler(async (req, res) => {
 const updateHomepageSettings = asyncHandler(async (req, res) => {
   const settings = await mongoose.model('HomepageSetting').getSettings();
   const updates = normalizeHomepageImageUrls(req.body);
+
+  if (Array.isArray(updates.categories)) {
+    await validateCategoryReferences(updates.categories);
+  }
+
+  if (Array.isArray(updates.videoReels)) {
+    await validateAndResolveVideoReelSkus(updates.videoReels);
+  }
 
   const safeUpdates = {};
   for (const key of Object.keys(updates)) {
@@ -601,6 +614,154 @@ const ensureBoolean = (value, fallback = true) => {
   return fallback;
 };
 
+const Product = require('../models/Product');
+const Category = require('../models/Category');
+
+const resolveCategoryReferences = async (categories) => {
+  if (!Array.isArray(categories)) return categories;
+
+  const ids = categories
+    .map((c) => c && c.categoryId)
+    .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)));
+
+  if (ids.length === 0) return categories;
+
+  const cats = await Category.find({ _id: { $in: ids } })
+    .select('name slug')
+    .lean();
+
+  const catMap = {};
+  cats.forEach((cat) => {
+    catMap[String(cat._id)] = { name: cat.name, slug: cat.slug };
+  });
+
+  return categories.map((cat) => {
+    const ref = cat.categoryId && catMap[String(cat.categoryId)];
+    if (ref) {
+      return { ...cat.toObject ? cat.toObject() : cat, categoryName: ref.name, categorySlug: ref.slug };
+    }
+    return cat;
+  });
+};
+
+const resolveVideoReelReferences = async (reels) => {
+  if (!Array.isArray(reels)) return reels;
+
+  const skus = reels
+    .map((r) => r && r.sku)
+    .filter((sku) => sku && typeof sku === 'string' && sku.trim());
+
+  if (skus.length === 0) return reels;
+
+  const products = await Product.find({ sku: { $in: skus } })
+    .select('_id name sku slug')
+    .lean();
+
+  const productMap = {};
+  products.forEach((p) => {
+    productMap[String(p.sku)] = { id: p._id, name: p.name, slug: p.slug };
+  });
+
+  return reels.map((reel) => {
+    const sku = reel.sku;
+    const match = sku && productMap[String(sku)];
+    if (match) {
+      const plain = reel.toObject ? reel.toObject() : { ...reel };
+      plain.productId = plain.productId || match.id;
+      plain.productName = match.name;
+      return plain;
+    }
+    return reel;
+  });
+};
+
+const resolveHomepageReferences = async (data) => {
+  if (!data || typeof data !== 'object') return data;
+
+  if (Array.isArray(data.categories)) {
+    data.categories = await resolveCategoryReferences(data.categories);
+  }
+
+  if (Array.isArray(data.videoReels)) {
+    data.videoReels = await resolveVideoReelReferences(data.videoReels);
+  }
+
+  return data;
+};
+
+const validateCategoryReferences = async (categories) => {
+  if (!Array.isArray(categories)) return;
+
+  const ids = categories
+    .map((c) => c && c.categoryId)
+    .filter((id) => id && mongoose.Types.ObjectId.isValid(String(id)));
+
+  if (ids.length === 0) return;
+
+  const existing = await Category.find({ _id: { $in: ids } })
+    .select('_id')
+    .lean();
+
+  const existingIds = new Set(existing.map((c) => String(c._id)));
+
+  const invalid = categories.find(
+    (c) => c && c.categoryId && !existingIds.has(String(c.categoryId))
+  );
+
+  if (invalid) {
+    const err = new Error(`Category not found for categoryId: ${invalid.categoryId}`);
+    err.statusCode = 400;
+    throw err;
+  }
+};
+
+const validateVideoReelSku = async (sku) => {
+  if (!sku || typeof sku !== 'string' || !sku.trim()) return null;
+
+  const product = await Product.findOne({ sku: sku.trim() })
+    .select('_id name slug')
+    .lean();
+
+  if (!product) {
+    const err = new Error(`Product with SKU "${sku.trim()}" not found`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  return product;
+};
+
+const validateAndResolveVideoReelSkus = async (reels) => {
+  if (!Array.isArray(reels)) return;
+
+  const skus = reels
+    .filter((r) => r && r.sku && typeof r.sku === 'string' && r.sku.trim())
+    .map((r) => r.sku.trim());
+
+  if (skus.length === 0) return;
+
+  const products = await Product.find({ sku: { $in: skus } })
+    .select('_id sku')
+    .lean();
+
+  const productMap = {};
+  products.forEach((p) => {
+    productMap[String(p.sku)] = p._id;
+  });
+
+  for (const reel of reels) {
+    if (reel && reel.sku && typeof reel.sku === 'string' && reel.sku.trim()) {
+      const resolved = productMap[reel.sku.trim()];
+      if (!resolved) {
+        const err = new Error(`Product with SKU "${reel.sku.trim()}" not found`);
+        err.statusCode = 400;
+        throw err;
+      }
+      reel.productId = resolved;
+    }
+  }
+};
+
 const normalizeVideoReelInput = (body) => {
   const result = {};
 
@@ -609,6 +770,13 @@ const normalizeVideoReelInput = (body) => {
       throw new Error('title must be a string value');
     }
     result.title = ensureString(body.title);
+  }
+
+  if (body.sku !== undefined && body.sku !== null) {
+    if (typeof body.sku === 'object') {
+      throw new Error('sku must be a string value');
+    }
+    result.sku = ensureString(body.sku);
   }
 
   if (body.thumbnail !== undefined && body.thumbnail !== null) {
@@ -684,7 +852,7 @@ const uploadVideoReel = asyncHandler(async (req, res) => {
 
   const videoUrl = buildProxyMediaUrl(driveFile.id);
 
-  let normalized;
+   let normalized;
   try {
     normalized = normalizeVideoReelInput(req.body);
   } catch (err) {
@@ -692,6 +860,18 @@ const uploadVideoReel = asyncHandler(async (req, res) => {
       success: false,
       message: err.message,
     });
+  }
+
+  let resolvedProduct = null;
+  if (normalized.sku) {
+    try {
+      resolvedProduct = await validateVideoReelSku(normalized.sku);
+    } catch (err) {
+      return res.status(err.statusCode || 400).json({
+        success: false,
+        message: err.message,
+      });
+    }
   }
 
   const thumbnailFile = req.files?.thumbnail?.[0];
@@ -715,8 +895,10 @@ const uploadVideoReel = asyncHandler(async (req, res) => {
     ? Math.max(...settings.videoReels.map((r) => (r.sortOrder != null ? r.sortOrder : 0))) + 1
     : 0;
 
-  const newReel = {
+   const newReel = {
     title: normalized.title !== undefined ? normalized.title : '',
+    sku: normalized.sku !== undefined ? normalized.sku : '',
+    productId: resolvedProduct ? resolvedProduct._id : undefined,
     videoUrl,
     videoMetadata: {
       driveFileId: driveFile.id,
@@ -842,6 +1024,25 @@ const updateVideoReel = asyncHandler(async (req, res) => {
       success: false,
       message: err.message,
     });
+  }
+
+  if (normalized.sku !== undefined) {
+    if (normalized.sku) {
+      let resolvedProduct = null;
+      try {
+        resolvedProduct = await validateVideoReelSku(normalized.sku);
+      } catch (err) {
+        return res.status(err.statusCode || 400).json({
+          success: false,
+          message: err.message,
+        });
+      }
+      settings.videoReels[reelIndex].sku = normalized.sku;
+      settings.videoReels[reelIndex].productId = resolvedProduct._id;
+    } else {
+      settings.videoReels[reelIndex].sku = '';
+      settings.videoReels[reelIndex].productId = undefined;
+    }
   }
 
   if (normalized.title !== undefined) {
@@ -1032,10 +1233,12 @@ const getVideoReelsPublic = asyncHandler(async (req, res) => {
     ? normalized.videoReels.filter((reel) => reel.isActive !== false)
     : [];
 
+  const resolvedReels = await resolveVideoReelReferences(activeReels);
+
   res.status(200).json({
     success: true,
-    count: activeReels.length,
-    data: activeReels,
+    count: resolvedReels.length,
+    data: resolvedReels,
   });
 });
 
@@ -1158,6 +1361,14 @@ const updateHomepageTab = asyncHandler(async (req, res) => {
   const settings = await mongoose.model('HomepageSetting').getSettings();
 
   const updates = normalizeHomepageImageUrls(payload);
+
+  if (Array.isArray(updates.categories)) {
+    await validateCategoryReferences(updates.categories);
+  }
+
+  if (Array.isArray(updates.videoReels)) {
+    await validateAndResolveVideoReelSkus(updates.videoReels);
+  }
 
   const safeUpdates = {};
   for (const key of Object.keys(updates)) {

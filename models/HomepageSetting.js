@@ -124,6 +124,7 @@ const homepageSettingSchema = mongoose.Schema(
         name: { type: String, required: true, trim: true },
         image: { type: String },
         link: { type: String, trim: true },
+        categoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'Category' },
         sortOrder: { type: Number, default: 0 },
       },
     ],
@@ -140,6 +141,8 @@ const homepageSettingSchema = mongoose.Schema(
       videoReels: [
         {
           title: { type: String, trim: true },
+          sku: { type: String, trim: true },
+          productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
           videoUrl: { type: String },
           videoMetadata: {
             driveFileId: { type: String },
