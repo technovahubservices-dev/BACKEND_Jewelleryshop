@@ -27,6 +27,51 @@ const storeSettingSchema = mongoose.Schema(
       maxlength: [10, 'Currency cannot exceed 10 characters'],
       default: 'INR',
     },
+    policies: {
+      type: [
+        {
+          type: {
+            type: String,
+            enum: [
+              'authenticity',
+              'purity',
+              'returns',
+              'exchange',
+              'warranty',
+              'shipping',
+              'care',
+              'customisation',
+            ],
+            required: true,
+          },
+          title: {
+            type: String,
+            trim: true,
+            maxlength: [200, 'Policy title cannot exceed 200 characters'],
+            required: true,
+          },
+          description: {
+            type: String,
+            maxlength: [2000, 'Policy description cannot exceed 2000 characters'],
+            required: true,
+          },
+          icon: {
+            type: String,
+            trim: true,
+            maxlength: [100, 'Icon cannot exceed 100 characters'],
+          },
+          sortOrder: {
+            type: Number,
+            default: 0,
+          },
+          isActive: {
+            type: Boolean,
+            default: true,
+          },
+        },
+      ],
+      default: [],
+    },
   },
   {
     timestamps: true,

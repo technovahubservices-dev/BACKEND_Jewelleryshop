@@ -80,6 +80,22 @@ const productSchema = mongoose.Schema(
         'Aura',
         'New Arrival',
         'Best Seller',
+        'Bridal',
+        'Wedding',
+        'Occasion',
+      ],
+    },
+    occasion: {
+      type: String,
+      enum: [
+        'Bridal',
+        'Wedding',
+        'Engagement',
+        'Party',
+        'Festive',
+        'Everyday',
+        'Anniversary',
+        'Gift',
       ],
     },
     metal: {
@@ -187,6 +203,10 @@ productSchema.index({ name: 1 });
 productSchema.index({ category: 1 });
 productSchema.index({ status: 1 });
 productSchema.index({ isFeatured: 1 });
+productSchema.index({ jewelleryCollection: 1 });
+productSchema.index({ occasion: 1 });
+productSchema.index({ price: 1 });
+productSchema.index({ discountPrice: 1 });
 
 productSchema.pre('save', function (next) {
   if (!this.slug && this.name) {

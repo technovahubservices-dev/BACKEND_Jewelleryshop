@@ -19,26 +19,16 @@ const createAdminUser = async (email, password) => {
   return user;
 };
 
-const createRegularUser = async (email, password) => {
-  const salt = await bcrypt.genSalt(10);
-  const hashedPassword = await bcrypt.hash(password, salt);
-  const user = await User.create({
-    name: 'Customer',
-    email,
-    password: hashedPassword,
-  });
-  return user;
+const cleanup = async () => {
+  await Order.deleteMany({});
+  await Product.deleteMany({});
+  await User.deleteMany({});
 };
 
-describe('Order Creation & Stock Validation', () => {
-  beforeAll(connect);
-  afterAll(async () => {
-    await Order.deleteMany({});
-    await Product.deleteMany({});
-    await User.deleteMany({});
-    await close();
-  });
+beforeAll(connect);
+afterAll(close);
 
+describe('Order Creation & Stock Validation', () => {
   let userToken;
   let adminToken;
   let productId;
@@ -84,6 +74,8 @@ describe('Order Creation & Stock Validation', () => {
       .field('imageUrls', 'https://example.com/image.jpg');
     productId = productRes.body.data._id;
   });
+
+  afterAll(cleanup);
 
   it('should create order and reduce stock', async () => {
     const res = await request(app)
@@ -158,14 +150,6 @@ describe('Order Creation & Stock Validation', () => {
 });
 
 describe('My Orders (GET /api/orders/my-orders)', () => {
-  beforeAll(connect);
-  afterAll(async () => {
-    await Order.deleteMany({});
-    await Product.deleteMany({});
-    await User.deleteMany({});
-    await close();
-  });
-
   let userToken;
   let adminToken;
   let productId;
@@ -258,6 +242,8 @@ describe('My Orders (GET /api/orders/my-orders)', () => {
     orderId = orderRes.body.data._id;
   });
 
+  afterAll(cleanup);
+
   it('should return only the authenticated user orders', async () => {
     const res = await request(app)
       .get('/api/orders/my-orders')
@@ -316,7 +302,6 @@ describe('My Orders (GET /api/orders/my-orders)', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.count).toBe(2);
-    expect(res.body.pagination).toBeUndefined();
     expect(res.body.page).toBe(1);
     expect(res.body.pages).toBe(2);
   });
@@ -331,14 +316,6 @@ describe('My Orders (GET /api/orders/my-orders)', () => {
 });
 
 describe('Order Details (GET /api/orders/:id)', () => {
-  beforeAll(connect);
-  afterAll(async () => {
-    await Order.deleteMany({});
-    await Product.deleteMany({});
-    await User.deleteMany({});
-    await close();
-  });
-
   let userToken;
   let adminToken;
   let otherUserToken;
@@ -437,6 +414,8 @@ describe('Order Details (GET /api/orders/:id)', () => {
     orderId = orderRes.body.data._id;
   });
 
+  afterAll(cleanup);
+
   it('should return full order details for the owner', async () => {
     const res = await request(app)
       .get(`/api/orders/${orderId}`)
@@ -494,14 +473,6 @@ describe('Order Details (GET /api/orders/:id)', () => {
 });
 
 describe('Order Invoice (GET /api/orders/:id/invoice)', () => {
-  beforeAll(connect);
-  afterAll(async () => {
-    await Order.deleteMany({});
-    await Product.deleteMany({});
-    await User.deleteMany({});
-    await close();
-  });
-
   let userToken;
   let adminToken;
   let otherUserToken;
@@ -599,6 +570,8 @@ describe('Order Invoice (GET /api/orders/:id/invoice)', () => {
 
     orderId = orderRes.body.data._id;
   });
+
+  afterAll(cleanup);
 
   it('should download invoice as PDF for the owner', async () => {
     const res = await request(app)

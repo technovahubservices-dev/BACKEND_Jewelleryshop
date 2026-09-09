@@ -7,6 +7,17 @@ const {
   normalizeGoogleDriveUrl,
   uploadRequestFilesToGoogleDrive,
 } = require('../utils/googleDriveStorage');
+const { computeProductPrices } = require('../utils/discountCalculator');
+
+const VALID_COLLECTIONS = [
+  'Heritage', 'Eternal', 'Blossom', 'Celeste', 'Aura',
+  'New Arrival', 'Best Seller', 'Bridal', 'Wedding', 'Occasion',
+];
+
+const VALID_OCCASIONS = [
+  'Bridal', 'Wedding', 'Engagement', 'Party',
+  'Festive', 'Everyday', 'Anniversary', 'Gift',
+];
 
 const normalizeImage = (img, index) => {
   if (typeof img === 'string') {
@@ -65,6 +76,9 @@ const normalizeProductImages = (product) => {
   if (plainProduct.productVideoThumbnail) {
     plainProduct.productVideoThumbnail = normalizeGoogleDriveUrl(plainProduct.productVideoThumbnail);
   }
+
+  const prices = computeProductPrices(plainProduct);
+  Object.assign(plainProduct, prices);
 
   return plainProduct;
 };
@@ -154,29 +168,71 @@ exports.createProduct = async (req, res) => {
       diamondColor,
       productVideoUrl,
       productVideoThumbnail,
-      tags,
-      status,
-      isFeatured,
-      isBestSeller,
-      isNewArrival,
-      reservedStock,
-      minimumStock,
-      availableWeight,
-    } = req.body;
+    tags,
+    status,
+    isFeatured,
+    isBestSeller,
+    isNewArrival,
+    reservedStock,
+    minimumStock,
+    availableWeight,
+    occasion,
+  } = req.body;
 
-    if (!name || !name.trim()) {
+  if (!name || !name.trim()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Product name is required',
+    });
+  }
+
+  if (!category || !category.trim()) {
+    return res.status(400).json({
+      success: false,
+      message: 'Category is required',
+    });
+  }
+
+  if (jewelleryCollection && !VALID_COLLECTIONS.includes(jewelleryCollection)) {
+    return res.status(400).json({
+      success: false,
+      message: `Invalid collection. Valid values: ${VALID_COLLECTIONS.join(', ')}`,
+    });
+  }
+
+  if (occasion && !VALID_OCCASIONS.includes(occasion)) {
+    return res.status(400).json({
+      success: false,
+      message: `Invalid occasion. Valid values: ${VALID_OCCASIONS.join(', ')}`,
+    });
+  }
+
+  if (discountPrice !== undefined && discountPrice !== '' && discountPrice !== null) {
+    const parsedDiscount = parseFloat(discountPrice);
+    const parsedPrice = price !== undefined && price !== '' ? parseFloat(price) : 0;
+    if (!isNaN(parsedDiscount) && parsedDiscount < 0) {
       return res.status(400).json({
         success: false,
-        message: 'Product name is required',
+        message: 'Discount price cannot be negative',
       });
     }
-
-    if (!category || !category.trim()) {
+    if (!isNaN(parsedDiscount) && !isNaN(parsedPrice) && parsedDiscount >= parsedPrice) {
       return res.status(400).json({
         success: false,
-        message: 'Category is required',
+        message: 'Discount price must be less than the regular price',
       });
     }
+  }
+
+  if (price !== undefined && price !== '' && price !== null) {
+    const parsedPrice = parseFloat(price);
+    if (!isNaN(parsedPrice) && parsedPrice < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Price cannot be negative',
+      });
+    }
+  }
 
     // SKU validation must happen BEFORE any image upload to Google Drive,
     // so that duplicate SKUs are rejected early and do not leave orphaned files.
@@ -296,6 +352,7 @@ exports.createProduct = async (req, res) => {
     if (stock !== undefined && stock !== '') productData.stock = parseInt(stock, 10);
     if (subcategory) productData.subcategory = subcategory;
     if (jewelleryCollection) productData.jewelleryCollection = jewelleryCollection;
+    if (occasion) productData.occasion = occasion;
     if (metal) productData.metal = metal;
     if (purity) productData.purity = purity;
     if (weight) productData.weight = weight;
@@ -382,10 +439,14 @@ exports.getProducts = async (req, res) => {
       minPrice,
       maxPrice,
       inStock,
+      availability,
       isFeatured,
       isBestSeller,
       isNewArrival,
       discount,
+      occasion,
+      bridal,
+      wedding,
       diamondShape,
       diamondClarity,
       diamondColor,
@@ -405,6 +466,7 @@ exports.getProducts = async (req, res) => {
         { tags: { $in: [new RegExp(search, 'i')] } },
         { subcategory: { $regex: search, $options: 'i' } },
         { jewelleryCollection: { $regex: search, $options: 'i' } },
+        { occasion: { $regex: search, $options: 'i' } },
       ];
     }
 
@@ -428,6 +490,21 @@ exports.getProducts = async (req, res) => {
           query.jewelleryCollection = trimmedCol;
         }
       }
+    }
+
+    if (occasion) {
+      const trimmedOccasion = String(occasion).trim();
+      if (trimmedOccasion) {
+        query.occasion = trimmedOccasion;
+      }
+    }
+
+    if (bridal === 'true' || bridal === true) {
+      query.occasion = 'Bridal';
+    }
+
+    if (wedding === 'true' || wedding === true) {
+      query.occasion = 'Wedding';
     }
 
     if (metal) {
@@ -482,7 +559,14 @@ exports.getProducts = async (req, res) => {
       }
     }
 
-    if (inStock === 'true' || inStock === true) {
+    if (availability) {
+      const avail = String(availability).trim().toLowerCase();
+      if (avail === 'in-stock' || avail === 'true') {
+        query.stock = { $gt: 0 };
+      } else if (avail === 'out-of-stock') {
+        query.stock = { $lte: 0 };
+      }
+    } else if (inStock === 'true' || inStock === true) {
       query.stock = { $gt: 0 };
     }
 
@@ -500,6 +584,42 @@ exports.getProducts = async (req, res) => {
 
     if (discount === 'true' || discount === true) {
       query.discountPrice = { $gt: 0 };
+    } else if (discount && String(discount).toLowerCase() !== 'all') {
+      const discountVal = String(discount).toLowerCase();
+      if (discountVal === 'onsale') {
+        query.discountPrice = { $gt: 0 };
+      } else if (discountVal === 'none') {
+        query.discountPrice = { $lte: 0 };
+      } else {
+        const discountThresholds = {
+          '10+': 10,
+          '10': 10,
+          '10percent': 10,
+          '20+': 20,
+          '30+': 30,
+          '50+': 50,
+        };
+        const threshold = discountThresholds[discountVal];
+        if (threshold) {
+          query.discountPrice = { $gt: 0 };
+          query.$expr = {
+            $gte: [
+              {
+                $multiply: [
+                  {
+                    $divide: [
+                      { $subtract: ['$price', '$discountPrice'] },
+                      '$price',
+                    ],
+                  },
+                  100,
+                ],
+              },
+              threshold,
+            ],
+          };
+        }
+      }
     }
 
     let productsQuery = Product.find(query);
@@ -669,6 +789,7 @@ exports.updateProduct = async (req, res) => {
       reservedStock,
       minimumStock,
       availableWeight,
+      occasion,
     } = req.body;
 
     let product = await Product.findById(req.params.id);
@@ -691,6 +812,46 @@ exports.updateProduct = async (req, res) => {
           message: 'A product with this SKU already exists',
         });
       }
+    }
+
+    if (jewelleryCollection && jewelleryCollection !== '' && !VALID_COLLECTIONS.includes(jewelleryCollection)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid collection. Valid values: ${VALID_COLLECTIONS.join(', ')}`,
+      });
+    }
+
+    if (occasion !== undefined && occasion !== null && occasion !== '' && !VALID_OCCASIONS.includes(occasion)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid occasion. Valid values: ${VALID_OCCASIONS.join(', ')}`,
+      });
+    }
+
+    const priceNum = price !== undefined && price !== '' ? parseFloat(price) : null;
+    const discountPriceNum = discountPrice !== undefined && discountPrice !== '' ? parseFloat(discountPrice) : null;
+    const effectivePrice = priceNum !== null ? priceNum : product.price;
+
+    if (discountPriceNum !== null) {
+      if (discountPriceNum < 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Discount price cannot be negative',
+        });
+      }
+      if (discountPriceNum >= effectivePrice) {
+        return res.status(400).json({
+          success: false,
+          message: 'Discount price must be less than the regular price',
+        });
+      }
+    }
+
+    if (priceNum !== null && priceNum < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Price cannot be negative',
+      });
     }
 
     const oldImageUrls = [...(product.images || [])];
@@ -757,6 +918,7 @@ exports.updateProduct = async (req, res) => {
     if (category) product.category = category;
     if (subcategory) product.subcategory = subcategory;
     if (jewelleryCollection) product.jewelleryCollection = jewelleryCollection;
+    if (occasion !== undefined && occasion !== null && occasion !== '') product.occasion = occasion;
     if (metal) product.metal = metal;
     if (purity) product.purity = purity;
     if (weight) product.weight = weight;
@@ -890,6 +1052,7 @@ const DEFAULT_PRODUCTS = [
     diamondColor: 'G',
     images: ['https://placehold.co/600x600?text=Diamond+Ring+1', 'https://placehold.co/600x600?text=Diamond+Ring+2'],
     tags: ['engagement', 'solitaire', 'diamond', 'white-gold'],
+    occasion: 'Engagement',
     isFeatured: true,
     isBestSeller: true,
     isNewArrival: false,
@@ -908,6 +1071,7 @@ const DEFAULT_PRODUCTS = [
     weight: '12g',
     images: ['https://placehold.co/600x600?text=Gold+Bangle+1', 'https://placehold.co/600x600?text=Gold+Bangle+2'],
     tags: ['bangles', 'heritage', 'gold', 'traditional'],
+    occasion: 'Festive',
     isFeatured: true,
     isBestSeller: true,
     isNewArrival: false,
@@ -932,6 +1096,7 @@ const DEFAULT_PRODUCTS = [
     diamondColor: 'H',
     images: ['https://placehold.co/600x600?text=Blossom+Pendant+1', 'https://placehold.co/600x600?text=Blossom+Pendant+2'],
     tags: ['pendant', 'blossom', 'rose-gold', 'diamond'],
+    occasion: 'Anniversary',
     isFeatured: false,
     isBestSeller: false,
     isNewArrival: true,
@@ -955,6 +1120,7 @@ const DEFAULT_PRODUCTS = [
     diamondColor: 'I',
     images: ['https://placehold.co/600x600?text=Sapphire+Earrings+1', 'https://placehold.co/600x600?text=Sapphire+Earrings+2'],
     tags: ['earrings', 'sapphire', 'celeste', 'gold'],
+    occasion: 'Party',
     isFeatured: false,
     isBestSeller: true,
     isNewArrival: false,
@@ -974,6 +1140,7 @@ const DEFAULT_PRODUCTS = [
     weight: '4.5g',
     images: ['https://placehold.co/600x600?text=Gold+Bracelet+1', 'https://placehold.co/600x600?text=Gold+Bracelet+2'],
     tags: ['bracelet', 'chain', 'aura', 'gold'],
+    occasion: 'Everyday',
     isFeatured: false,
     isBestSeller: false,
     isNewArrival: false,
@@ -998,6 +1165,7 @@ const DEFAULT_PRODUCTS = [
     diamondColor: 'G',
     images: ['https://placehold.co/600x600?text=Three+Stone+Ring+1', 'https://placehold.co/600x600?text=Three+Stone+Ring+2'],
     tags: ['engagement', 'three-stone', 'diamond', 'white-gold'],
+    occasion: 'Engagement',
     isFeatured: true,
     isBestSeller: false,
     isNewArrival: false,
@@ -1017,6 +1185,7 @@ const DEFAULT_PRODUCTS = [
     weight: '2.1g',
     images: ['https://placehold.co/600x600?text=Pearl+Earrings+1', 'https://placehold.co/600x600?text=Pearl+Earrings+2'],
     tags: ['earrings', 'blossom', 'pearl', 'rose-gold'],
+    occasion: 'Gift',
     isFeatured: false,
     isBestSeller: false,
     isNewArrival: true,
@@ -1036,11 +1205,77 @@ const DEFAULT_PRODUCTS = [
     weight: '8.5g',
     images: ['https://placehold.co/600x600?text=Kundan+Bangle+1', 'https://placehold.co/600x600?text=Kundan+Bangle+2'],
     tags: ['bangles', 'kundan', 'heritage', 'traditional'],
+    occasion: 'Festive',
     isFeatured: true,
     isBestSeller: true,
     isNewArrival: false,
     rating: 4.6,
     reviews: 112,
+  },
+  {
+    name: 'Bridal Diamond Necklace Set',
+    description: 'A stunning bridal necklace set with diamonds and pearls, perfect for the wedding day.',
+    price: 45999,
+    discountPrice: 39999,
+    stock: 8,
+    category: 'Necklaces',
+    subcategory: 'Pendant Sets',
+    jewelleryCollection: 'Bridal',
+    metal: 'Gold',
+    purity: '18K',
+    weight: '15g',
+    diamondWeight: '2.0ct total',
+    diamondShape: 'Round',
+    diamondClarity: 'VS1',
+    diamondColor: 'G',
+    images: ['https://placehold.co/600x600?text=Bridal+Necklace+1', 'https://placehold.co/600x600?text=Bridal+Necklace+2'],
+    tags: ['bridal', 'wedding', 'necklace', 'diamond', 'pearls'],
+    occasion: 'Bridal',
+    isFeatured: true,
+    isBestSeller: false,
+    isNewArrival: false,
+    rating: 4.9,
+    reviews: 56,
+  },
+  {
+    name: 'Wedding Band Set for Groom',
+    description: 'Classic wedding bands for him and her, crafted in polished 14K gold.',
+    price: 15999,
+    stock: 30,
+    category: 'Rings',
+    subcategory: 'Wedding Bands',
+    jewelleryCollection: 'Wedding',
+    metal: 'Gold',
+    purity: '14K',
+    weight: '4g',
+    images: ['https://placehold.co/600x600?text=Wedding+Band+1', 'https://placehold.co/600x600?text=Wedding+Band+2'],
+    tags: ['wedding', 'bands', 'gold', 'couple'],
+    occasion: 'Wedding',
+    isFeatured: false,
+    isBestSeller: true,
+    isNewArrival: false,
+    rating: 4.7,
+    reviews: 89,
+  },
+  {
+    name: 'Occasion Gold Jhumkas',
+    description: 'Traditional gold jhumkas perfect for festivals and special occasions.',
+    price: 7999,
+    stock: 25,
+    category: 'Earrings',
+    subcategory: 'Gold Earrings',
+    jewelleryCollection: 'Occasion',
+    metal: 'Gold',
+    purity: '22K',
+    weight: '6g',
+    images: ['https://placehold.co/600x600?text=Jhumkas+1', 'https://placehold.co/600x600?text=Jhumkas+2'],
+    tags: ['earrings', 'jhumkas', 'occasion', 'gold', 'festive'],
+    occasion: 'Festive',
+    isFeatured: false,
+    isBestSeller: false,
+    isNewArrival: true,
+    rating: 4.5,
+    reviews: 34,
   },
 ];
 

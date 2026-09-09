@@ -3,17 +3,40 @@ const StoreSetting = require('../models/StoreSetting');
 
 const SUPPORTED_CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AED', 'JPY', 'CAD', 'AUD', 'SGD'];
 
-const ALLOWED_STORE_FIELDS = ['storeName', 'email', 'phone', 'currency'];
+const ALLOWED_STORE_FIELDS = ['storeName', 'email', 'phone', 'currency', 'policies'];
 
-const sanitizeSettings = (doc) => ({
-  _id: doc._id,
-  storeName: doc.storeName,
-  email: doc.email,
-  phone: doc.phone,
-  currency: doc.currency,
-  createdAt: doc.createdAt,
-  updatedAt: doc.updatedAt,
-});
+const POLICY_TYPES = [
+  'authenticity', 'purity', 'returns', 'exchange',
+  'warranty', 'shipping', 'care', 'customisation',
+];
+
+const sanitizeSettings = (doc) => {
+  const plain = typeof doc?.toObject === 'function' ? doc.toObject() : doc;
+  const policies = Array.isArray(plain.policies)
+    ? plain.policies
+        .filter((p) => p && p.isActive !== false)
+        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+        .map((p) => ({
+          type: p.type,
+          title: p.title,
+          description: p.description,
+          icon: p.icon || '',
+          sortOrder: p.sortOrder || 0,
+          isActive: p.isActive !== undefined ? p.isActive : true,
+        }))
+    : [];
+
+  return {
+    _id: plain._id,
+    storeName: plain.storeName,
+    email: plain.email,
+    phone: plain.phone,
+    currency: plain.currency,
+    policies,
+    createdAt: plain.createdAt,
+    updatedAt: plain.updatedAt,
+  };
+};
 
 const getAdminSettings = asyncHandler(async (req, res) => {
   const settings = await StoreSetting.getSettings();
@@ -76,6 +99,44 @@ const updateAdminSettings = asyncHandler(async (req, res) => {
     updateData.currency = trimmed;
   }
 
+  if (updateData.policies !== undefined) {
+    if (!Array.isArray(updateData.policies)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Policies must be an array',
+      });
+    }
+    try {
+      updateData.policies = updateData.policies.map((p, index) => {
+        if (!p || typeof p !== 'object') {
+          throw new Error(`Policy at index ${index} must be an object`);
+        }
+        if (!p.type || !POLICY_TYPES.includes(p.type)) {
+          throw new Error(`Invalid policy type at index ${index}. Valid types: ${POLICY_TYPES.join(', ')}`);
+        }
+        if (!p.title || !String(p.title).trim()) {
+          throw new Error(`Policy title is required at index ${index}`);
+        }
+        if (!p.description || !String(p.description).trim()) {
+          throw new Error(`Policy description is required at index ${index}`);
+        }
+        return {
+          type: p.type,
+          title: String(p.title).trim(),
+          description: String(p.description).trim(),
+          icon: p.icon ? String(p.icon).trim() : '',
+          sortOrder: typeof p.sortOrder === 'number' ? p.sortOrder : index + 1,
+          isActive: p.isActive !== undefined ? p.isActive : true,
+        };
+      });
+    } catch (validationError) {
+      return res.status(400).json({
+        success: false,
+        message: validationError.message,
+      });
+    }
+  }
+
   if (Object.keys(updateData).length === 0) {
     const existing = await StoreSetting.getSettings();
     return res.status(200).json({
@@ -88,7 +149,7 @@ const updateAdminSettings = asyncHandler(async (req, res) => {
   const updated = await StoreSetting.findOneAndUpdate(
     {},
     { $set: updateData },
-    { new: true, runValidators: true }
+    { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
   ).exec();
 
   if (!updated) {

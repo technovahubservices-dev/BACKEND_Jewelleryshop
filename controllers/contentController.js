@@ -17,6 +17,8 @@ require('../models/Blog');
 require('../models/Testimonial');
 require('../models/HomepageSetting');
 
+const { computeProductPrices } = require('../utils/discountCalculator');
+
 const contentModels = {
   heroBanners: mongoose.model('HeroBanner'),
   featuredProducts: mongoose.model('FeaturedProduct'),
@@ -207,7 +209,7 @@ const getActive = (modelKey) => asyncHandler(async (req, res) => {
   const items = await Model.find(query)
     .populate(
       modelKey === 'featuredProducts'
-        ? { path: 'product', select: 'name sku price discountPrice primaryImage images category' }
+        ? { path: 'product', select: 'name sku price discountPrice primaryImage images category jewelleryCollection occasion' }
         : ''
     )
     .sort('sortOrder createdAt')
@@ -215,6 +217,10 @@ const getActive = (modelKey) => asyncHandler(async (req, res) => {
 
   const normalizedItems = items.map((item) => {
     const plain = typeof item?.toObject === 'function' ? item.toObject() : item;
+    if (plain.product && typeof plain.product === 'object') {
+      const prices = computeProductPrices(plain.product);
+      Object.assign(plain.product, prices);
+    }
     return normalizeContentItemImageUrls(plain);
   });
 
