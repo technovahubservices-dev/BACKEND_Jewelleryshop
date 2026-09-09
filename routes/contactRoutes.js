@@ -5,6 +5,15 @@ const asyncHandler = require('express-async-handler');
 const StoreSetting = require('../models/StoreSetting');
 const ContactEnquiry = require('../models/ContactEnquiry');
 const { sendInquiryEmail, isMailerConfigured } = require('../services/mailer');
+const {
+  getContactEnquiries,
+  getContactEnquiry,
+  updateContactStatus,
+  replyToEnquiry,
+  CONTACT_STATUSES,
+  CONTACT_STATUS_VALUES,
+} = require('../controllers/contactController');
+const { protect, admin } = require('../middleware/authMiddleware');
 
 const contactLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -91,5 +100,30 @@ const getContactStatus = asyncHandler(async (req, res) => {
 
 router.post('/', submitContactEnquiry);
 router.get('/status', getContactStatus);
+
+router.use(protect);
+router.use(admin);
+
+router.get('/admin', getContactEnquiries);
+router.get('/admin/statuses', (req, res) => {
+  res.status(200).json({
+    success: true,
+    data: CONTACT_STATUSES,
+    values: CONTACT_STATUS_VALUES,
+  });
+});
+router.get('/admin/stats', asyncHandler(async (req, res) => {
+  const stats = await ContactEnquiry.aggregate([
+    { $group: { _id: '$status', count: { $sum: 1 } } },
+  ]);
+  const statusCounts = {};
+  CONTACT_STATUSES.forEach((s) => { statusCounts[s.value] = 0; });
+  stats.forEach((s) => { statusCounts[s._id] = s.count; });
+  const total = await ContactEnquiry.countDocuments({});
+  res.status(200).json({ success: true, data: { total, byStatus: statusCounts } });
+}));
+router.get('/admin/:id', getContactEnquiry);
+router.put('/admin/:id/status', updateContactStatus);
+router.post('/admin/:id/reply', replyToEnquiry);
 
 module.exports = router;

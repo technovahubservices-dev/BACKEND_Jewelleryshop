@@ -51,12 +51,14 @@ const createProductViaAPI = async (app, token, data) => {
   return res;
 };
 
+beforeAll(connect);
+afterAll(close);
+
 describe('Sprint 4: Discount Calculation & Price Fields', () => {
   let adminToken;
 
   beforeAll(async () => {
-    await connect();
-    const admin = await createAdminUser(`admin_discount_${Date.now()}@test.com`, 'admin123');
+        const admin = await createAdminUser(`admin_discount_${Date.now()}@test.com`, 'admin123');
     adminToken = await adminLogin(app, admin.email, 'admin123');
   });
 
@@ -64,8 +66,7 @@ describe('Sprint 4: Discount Calculation & Price Fields', () => {
     await Product.deleteMany({});
     await User.deleteMany({});
     await StoreSetting.deleteMany({});
-    await close();
-  });
+      });
 
   it('normal product should return computed price fields', async () => {
     const res = await request(app)
@@ -165,16 +166,14 @@ describe('Sprint 4: Occasion & Bridal/Wedding Tags', () => {
   let adminToken;
 
   beforeAll(async () => {
-    await connect();
-    const admin = await createAdminUser(`admin_occasion_${Date.now()}@test.com`, 'admin123');
+        const admin = await createAdminUser(`admin_occasion_${Date.now()}@test.com`, 'admin123');
     adminToken = await adminLogin(app, admin.email, 'admin123');
   });
 
   afterAll(async () => {
     await Product.deleteMany({});
     await User.deleteMany({});
-    await close();
-  });
+      });
 
   it('should create product with occasion', async () => {
     const res = await request(app)
@@ -256,8 +255,7 @@ describe('Sprint 4: Collection Filtering', () => {
   let adminToken;
 
   beforeAll(async () => {
-    await connect();
-    const admin = await createAdminUser(`admin_colfilter_${Date.now()}@test.com`, 'admin123');
+        const admin = await createAdminUser(`admin_colfilter_${Date.now()}@test.com`, 'admin123');
     adminToken = await adminLogin(app, admin.email, 'admin123');
 
     await request(app)
@@ -292,8 +290,7 @@ describe('Sprint 4: Collection Filtering', () => {
   afterAll(async () => {
     await Product.deleteMany({});
     await User.deleteMany({});
-    await close();
-  });
+      });
 
   it('should filter products by collection', async () => {
     const res = await request(app)
@@ -329,8 +326,7 @@ describe('Sprint 4: Category Filtering', () => {
   let adminToken;
 
   beforeAll(async () => {
-    await connect();
-    const admin = await createAdminUser(`admin_catfilter_${Date.now()}@test.com`, 'admin123');
+        const admin = await createAdminUser(`admin_catfilter_${Date.now()}@test.com`, 'admin123');
     adminToken = await adminLogin(app, admin.email, 'admin123');
 
     await request(app)
@@ -361,8 +357,7 @@ describe('Sprint 4: Category Filtering', () => {
   afterAll(async () => {
     await Product.deleteMany({});
     await User.deleteMany({});
-    await close();
-  });
+      });
 
   it('should filter products by category', async () => {
     const res = await request(app)
@@ -397,8 +392,7 @@ describe('Sprint 4: Occasion Filtering', () => {
   let adminToken;
 
   beforeAll(async () => {
-    await connect();
-    const admin = await createAdminUser(`admin_occfilter_${Date.now()}@test.com`, 'admin123');
+        const admin = await createAdminUser(`admin_occfilter_${Date.now()}@test.com`, 'admin123');
     adminToken = await adminLogin(app, admin.email, 'admin123');
 
     await request(app)
@@ -432,8 +426,7 @@ describe('Sprint 4: Occasion Filtering', () => {
   afterAll(async () => {
     await Product.deleteMany({});
     await User.deleteMany({});
-    await close();
-  });
+      });
 
   it('should filter products by occasion Bridal', async () => {
     const res = await request(app)
@@ -483,8 +476,7 @@ describe('Sprint 4: Combined Filters', () => {
   let adminToken;
 
   beforeAll(async () => {
-    await connect();
-    const admin = await createAdminUser(`admin_combined_${Date.now()}@test.com`, 'admin123');
+        const admin = await createAdminUser(`admin_combined_${Date.now()}@test.com`, 'admin123');
     adminToken = await adminLogin(app, admin.email, 'admin123');
 
     await request(app)
@@ -537,8 +529,7 @@ describe('Sprint 4: Combined Filters', () => {
   afterAll(async () => {
     await Product.deleteMany({});
     await User.deleteMany({});
-    await close();
-  });
+      });
 
   it('Bridal + Bangles should filter correctly', async () => {
     const res = await request(app)
@@ -606,8 +597,7 @@ describe('Sprint 4: Discount Filter Levels', () => {
   let adminToken;
 
   beforeAll(async () => {
-    await connect();
-    const admin = await createAdminUser(`admin_discfilter_${Date.now()}@test.com`, 'admin123');
+        const admin = await createAdminUser(`admin_discfilter_${Date.now()}@test.com`, 'admin123');
     adminToken = await adminLogin(app, admin.email, 'admin123');
 
     await request(app)
@@ -652,8 +642,7 @@ describe('Sprint 4: Discount Filter Levels', () => {
   afterAll(async () => {
     await Product.deleteMany({});
     await User.deleteMany({});
-    await close();
-  });
+      });
 
   it('should filter "all" discount (default behavior)', async () => {
     const res = await request(app)
@@ -709,8 +698,7 @@ describe('Sprint 4: Product Response Fields', () => {
   let adminToken;
 
   beforeAll(async () => {
-    await connect();
-    const admin = await createAdminUser(`admin_resp_${Date.now()}@test.com`, 'admin123');
+        const admin = await createAdminUser(`admin_resp_${Date.now()}@test.com`, 'admin123');
     adminToken = await adminLogin(app, admin.email, 'admin123');
 
     await request(app)
@@ -734,8 +722,7 @@ describe('Sprint 4: Product Response Fields', () => {
   afterAll(async () => {
     await Product.deleteMany({});
     await User.deleteMany({});
-    await close();
-  });
+      });
 
   it('should return all required product response fields', async () => {
     const res = await request(app)
@@ -779,16 +766,14 @@ describe('Sprint 4: Public Policy API', () => {
   let adminToken;
 
   beforeAll(async () => {
-    await connect();
-    const admin = await createAdminUser(`admin_policy_${Date.now()}@test.com`, 'admin123');
+        const admin = await createAdminUser(`admin_policy_${Date.now()}@test.com`, 'admin123');
     adminToken = await adminLogin(app, admin.email, 'admin123');
   });
 
   afterAll(async () => {
     await StoreSetting.deleteMany({});
     await User.deleteMany({});
-    await close();
-  });
+      });
 
   it('should set policies via admin endpoint', async () => {
     const policies = [
@@ -894,16 +879,14 @@ describe('Sprint 4: Inactive Collection Excluded from Public', () => {
   let adminToken;
 
   beforeAll(async () => {
-    await connect();
-    const admin = await createAdminUser(`admin_inactive_${Date.now()}@test.com`, 'admin123');
+        const admin = await createAdminUser(`admin_inactive_${Date.now()}@test.com`, 'admin123');
     adminToken = await adminLogin(app, admin.email, 'admin123');
   });
 
   afterAll(async () => {
     await Product.deleteMany({});
     await User.deleteMany({});
-    await close();
-  });
+      });
 
   it('inactive products should not appear in public listing', async () => {
     await request(app)

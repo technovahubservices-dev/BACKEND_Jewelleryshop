@@ -34,10 +34,27 @@ const contactEnquirySchema = mongoose.Schema(
       type: String,
       default: '',
     },
+    status: {
+      type: String,
+      enum: ['new', 'read', 'replied', 'archived'],
+      default: 'new',
+    },
+    isRead: {
+      type: Boolean,
+      default: false,
+    },
+    adminNote: {
+      type: String,
+      default: '',
+    },
   },
   {
     timestamps: true,
   }
 );
+
+contactEnquirySchema.index({ createdAt: -1 });
+contactEnquirySchema.index({ status: 1, createdAt: -1 });
+contactEnquirySchema.index({ email: 1 });
 
 module.exports = mongoose.model('ContactEnquiry', contactEnquirySchema);

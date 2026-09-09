@@ -178,4 +178,29 @@ orderSchema.pre('validate', async function (next) {
   next();
 });
 
+const STATUS_DISPLAY_NAMES = {
+  pending_payment: 'Pending Payment',
+  new: 'New',
+  confirmed: 'Confirmed',
+  payment_received: 'Payment Received',
+  processing: 'Processing',
+  manufacturing: 'Manufacturing',
+  quality_check: 'Quality Check',
+  packed: 'Packed',
+  shipped: 'Shipped',
+  out_for_delivery: 'Out for Delivery',
+  delivered: 'Delivered',
+  cancelled: 'Cancelled',
+};
+
+orderSchema.statics.getStatusDisplayName = function (status) {
+  return STATUS_DISPLAY_NAMES[status] || (status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown');
+};
+
+orderSchema.statics.VALID_STATUSES = [
+  'new', 'confirmed', 'payment_received', 'processing',
+  'manufacturing', 'quality_check', 'packed', 'shipped',
+  'delivered', 'cancelled', 'pending_payment',
+];
+
 module.exports = mongoose.model('Order', orderSchema);

@@ -247,7 +247,62 @@ const sendInquiryEmail = async ({ to, fromName, fromEmail, name, email, message,
   }
 };
 
-const Order = require('../models/Order');
+const buildEnquiryReplyEmail = ({ customerName, storeName, replyMessage }) => {
+  const safeCustomerName = escapeHtml(customerName || 'Customer');
+  const safeStore = escapeHtml(storeName || 'Jewellery Shop');
+  const safeReply = escapeHtml(replyMessage || '').replace(/\n/g, '<br/>');
+
+  const subject = `Re: Your enquiry to ${safeStore}`;
+
+  const html = `
+    <div style="font-family: Arial, Helvetica, sans-serif; max-width: 600px; margin: 0 auto; color: #1f2937;">
+      <h2 style="color: #013220; margin-bottom: 16px;">Re: Your Enquiry</h2>
+      <p>Hi ${safeCustomerName},</p>
+      <p>Thank you for your enquiry. Here is our response:</p>
+      <div style="white-space: normal; padding: 16px; background: #f9fafb; border-left: 4px solid #013220; border-radius: 4px; margin: 16px 0;">
+        ${safeReply}
+      </div>
+      <p>If you have further questions, please don't hesitate to contact us.</p>
+      <p style="margin-top: 24px; font-size: 12px; color: #6b7280;">
+        Best regards,<br/>${safeStore} Team
+      </p>
+    </div>
+  `;
+
+  const text = `Re: Your enquiry to ${storeName || 'Jewellery Shop'}\n\nHi ${customerName || 'Customer'},\n\n${replyMessage || ''}\n\nBest regards,\n${storeName || 'Jewellery Shop'} Team`;
+
+  return { subject, html, text };
+};
+
+const sendEnquiryReplyEmail = async ({ to, customerName, storeName, replyMessage }) => {
+  if (!to) {
+    return { delivered: false, error: 'No recipient email' };
+  }
+
+  const transporter = getTransporter();
+  const fromAddress = getFromAddress();
+
+  if (!transporter || !fromAddress) {
+    console.warn('[mailer] SMTP not configured. Enquiry reply payload:', { to, customerName, storeName });
+    return { delivered: false, error: 'SMTP not configured' };
+  }
+
+  const { subject, html, text } = buildEnquiryReplyEmail({ customerName, storeName, replyMessage });
+
+  try {
+    await transporter.sendMail({
+      from: fromAddress,
+      to,
+      subject,
+      text,
+      html,
+    });
+    return { delivered: true };
+  } catch (err) {
+    console.error('[mailer] Enquiry reply email failed:', err.message);
+    return { delivered: false, error: err.message };
+  }
+};
 
 const sendOrderConfirmationEmail = async (order) => {
   try {
@@ -293,11 +348,58 @@ const sendOrderStatusNotificationEmail = async (order, newStatus) => {
   }
 };
 
+const sendContactReplyEmail = async ({ to, fromName, subject, message, storeName }) => {
+  if (!to) {
+    return { delivered: false, error: 'No recipient email address' };
+  }
+
+  const transporter = getTransporter();
+  const fromAddress = getFromAddress();
+
+  if (!transporter || !fromAddress) {
+    console.warn('[mailer] SMTP not configured. Contact reply payload:', { to, subject });
+    return { delivered: false, error: 'SMTP not configured' };
+  }
+
+  try {
+    const html = `
+      <div style="font-family: Arial, Helvetica, sans-serif; max-width: 600px; margin: 0 auto; color: #1f2937;">
+        <h2 style="color: #013220; margin-bottom: 16px;">Re: ${escapeHtml(subject)}</h2>
+        <p>Thank you for contacting ${escapeHtml(storeName || 'our store')}.</p>
+        <div style="white-space: normal; padding: 16px; background: #f9fafb; border-left: 4px solid #013220; border-radius: 4px; margin: 16px 0;">
+          ${escapeHtml(message).replace(/\n/g, '<br/>')}
+        </div>
+        <p style="margin-top: 24px; font-size: 12px; color: #6b7280;">
+          You can reply directly to this email to continue the conversation.
+        </p>
+      </div>
+    `;
+
+    const text = `Re: ${subject}\n\n${message}`;
+
+    await transporter.sendMail({
+      from: fromAddress,
+      to,
+      subject: subject || `Re: Contact Enquiry`,
+      text,
+      html,
+    });
+    return { delivered: true };
+  } catch (err) {
+    console.error('[mailer] Contact reply email failed:', err.message);
+    return { delivered: false, error: err.message };
+  }
+};
+
 module.exports = {
   sendInquiryEmail,
   sendOrderConfirmationEmail,
   sendOrderStatusNotificationEmail,
+  sendContactReplyEmail,
+  sendEnquiryReplyEmail,
+  buildEnquiryReplyEmail,
   isMailerConfigured,
   buildOrderConfirmationEmail,
   buildStatusNotificationEmail,
+  buildInquiryEmail,
 };

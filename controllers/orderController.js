@@ -287,10 +287,45 @@ exports.getOrders = asyncHandler(async (req, res) => {
     query.user = req.user._id;
   }
 
-  const { status, sort = '-createdAt', startDate, endDate, page = 1, limit = 20 } = req.query;
+  const { status, paymentStatus, shippingStatus, search, sort = '-createdAt', startDate, endDate, page = 1, limit = 20 } = req.query;
 
   if (status) {
     query.status = status;
+  }
+
+  if (paymentStatus) {
+    query.paymentStatus = paymentStatus;
+  }
+
+  if (shippingStatus) {
+    query.shippingStatus = shippingStatus;
+  }
+
+  if (search) {
+    const searchTerm = String(search).trim();
+    if (searchTerm) {
+      const User = require('../models/User');
+      const matchingUserIds = await User.find(
+        { $or: [{ name: { $regex: searchTerm, $options: 'i' } }, { email: { $regex: searchTerm, $options: 'i' } }] },
+        { _id: 1 }
+      ).lean();
+      const userIds = matchingUserIds.map((u) => u._id);
+
+      const searchRegex = { $regex: searchTerm, $options: 'i' };
+      const orConditions = [
+        { orderNumber: searchRegex },
+        { invoiceNumber: searchRegex },
+        { trackingNumber: searchRegex },
+        { 'shippingAddress.fullName': searchRegex },
+        { 'shippingAddress.phone': searchRegex },
+      ];
+
+      if (userIds.length > 0) {
+        orConditions.push({ user: { $in: userIds } });
+      }
+
+      query.$or = orConditions;
+    }
   }
 
   if (startDate || endDate) {
@@ -601,6 +636,19 @@ exports.sendOrderStatusNotification = asyncHandler(async (req, res) => {
     return res.status(400).json({
       success: false,
       message: 'Status is required',
+    });
+  }
+
+  const VALID_ORDER_STATUSES = [
+    'new', 'confirmed', 'payment_received', 'processing',
+    'manufacturing', 'quality_check', 'packed', 'shipped',
+    'delivered', 'cancelled', 'pending_payment',
+  ];
+
+  if (!VALID_ORDER_STATUSES.includes(status)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid status. Valid values: ' + VALID_ORDER_STATUSES.join(', '),
     });
   }
 
