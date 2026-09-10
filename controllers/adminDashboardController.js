@@ -5,15 +5,6 @@ const Product = require('../models/Product');
 const User = require('../models/User');
 const ContactEnquiry = require('../models/ContactEnquiry');
 
-const VALID_ORDER_STATUSES = [
-  'new', 'confirmed', 'payment_received', 'processing',
-  'manufacturing', 'quality_check', 'packed', 'shipped',
-  'delivered', 'cancelled', 'pending_payment',
-];
-
-const VALID_PAYMENT_STATUSES = ['pending', 'paid', 'failed', 'refunded', 'partially_refunded'];
-const VALID_SHIPPING_STATUSES = ['not_shipped', 'ready_to_ship', 'shipped', 'out_for_delivery', 'delivered'];
-
 const VALID_DATE_RANGES = {
   today: () => {
     const start = new Date();
@@ -107,11 +98,10 @@ exports.getDashboard = asyncHandler(async (req, res) => {
     revenueAgg,
     totalOrdersAgg,
     contactEnquiryStats,
-    lowStockAgg,
-    inventoryValueAgg,
     recentOrders,
     topProductsAgg,
     topCategoriesAgg,
+    categorySalesAgg,
     salesTrendAgg,
   ] = await Promise.all([
     Product.countDocuments({}),
@@ -180,7 +170,7 @@ exports.getDashboard = asyncHandler(async (req, res) => {
       { $limit: 1 },
     ]),
     Order.countDocuments({ ...dateQuery }),
-    ContactEnquiry.aggregate([
+     ContactEnquiry.aggregate([
       { $match: dateQuery },
       {
         $group: {
@@ -190,50 +180,6 @@ exports.getDashboard = asyncHandler(async (req, res) => {
           read: { $sum: { $cond: [{ $eq: ['$status', 'read'] }, 1, 0] } },
           replied: { $sum: { $cond: [{ $eq: ['$status', 'replied'] }, 1, 0] } },
           archived: { $sum: { $cond: [{ $eq: ['$status', 'archived'] }, 1, 0] } },
-        },
-      },
-      { $limit: 1 },
-    ]),
-    Product.aggregate([
-      {
-        $match: {
-          status: 'active',
-          $expr: {
-            $lte: ['$stock', { $ifNull: ['$minimumStock', 5] }],
-          },
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          count: { $sum: 1 },
-          products: {
-            $push: {
-              _id: '$_id',
-              name: '$name',
-              sku: '$sku',
-              stock: '$stock',
-              minimumStock: '$minimumStock',
-            },
-          },
-        },
-      },
-      { $limit: 1 },
-    ]),
-    Product.aggregate([
-      {
-        $match: {
-          status: 'active',
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          totalValue: {
-            $sum: {
-              $multiply: ['$price', '$stock'],
-            },
-          },
         },
       },
       { $limit: 1 },
@@ -308,6 +254,34 @@ exports.getDashboard = asyncHandler(async (req, res) => {
           status: { $in: ['confirmed', 'payment_received', 'processing', 'manufacturing', 'quality_check', 'packed', 'shipped', 'delivered'] },
         },
       },
+      { $unwind: '$items' },
+      {
+        $lookup: {
+          from: 'products',
+          localField: 'items.product',
+          foreignField: '_id',
+          as: 'productInfo',
+        },
+      },
+      { $unwind: { path: '$productInfo', preserveNullAndEmptyArrays: true } },
+      {
+        $group: {
+          _id: { $ifNull: ['$productInfo.category', 'Uncategorized'] },
+          category: { $first: { $ifNull: ['$productInfo.category', 'Uncategorized'] } },
+          quantitySold: { $sum: '$items.quantity' },
+          revenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } },
+          orderCount: { $sum: 1 },
+        },
+      },
+      { $sort: { revenue: -1 } },
+    ]),
+    Order.aggregate([
+      {
+        $match: {
+          ...dateQuery,
+          status: { $in: ['confirmed', 'payment_received', 'processing', 'manufacturing', 'quality_check', 'packed', 'shipped', 'delivered'] },
+        },
+      },
       {
         $project: {
           date: {
@@ -333,13 +307,6 @@ exports.getDashboard = asyncHandler(async (req, res) => {
   const shippingCounts = ordersByShippingStatus[0] || {};
   const revenueResult = revenueAgg[0] || { totalRevenue: 0 };
   const contactStats = contactEnquiryStats[0] || { total: 0, new: 0, read: 0, replied: 0, archived: 0 };
-  const lowStockResult = lowStockAgg[0] || { count: 0, products: [] };
-  const inventoryResult = inventoryValueAgg[0] || { totalValue: 0 };
-
-  const outOfStockProducts = await Product.countDocuments({
-    status: 'active',
-    stock: { $lte: 0 },
-  });
 
   res.status(200).json({
     success: true,
@@ -359,10 +326,6 @@ exports.getDashboard = asyncHandler(async (req, res) => {
       cancelledOrders: statusCounts.cancelled || 0,
       pendingPayments: paymentCounts.pending || 0,
       paidOrders: paymentCounts.paid || 0,
-      lowStockProducts: lowStockResult.count || 0,
-      lowStockList: lowStockResult.products || [],
-      outOfStockProducts,
-      inventoryValue: inventoryResult.totalValue || 0,
       recentOrders: recentOrders.map((order) => ({
         _id: order._id,
         orderNumber: order.orderNumber,
@@ -374,9 +337,10 @@ exports.getDashboard = asyncHandler(async (req, res) => {
         shippingStatus: order.shippingStatus,
         createdAt: order.createdAt,
       })),
-      topSellingProducts: topProductsAgg,
-      topCategories: topCategoriesAgg,
-      salesTrend: salesTrendAgg,
+       topSellingProducts: topProductsAgg,
+       topCategories: topCategoriesAgg,
+       categorySales: categorySalesAgg,
+       salesTrend: salesTrendAgg,
       contactEnquiries: {
         total: contactStats.total || 0,
         new: contactStats.new || 0,

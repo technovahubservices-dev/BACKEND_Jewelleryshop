@@ -212,18 +212,7 @@ describe('Sprint 5: Admin Dashboard', () => {
       expect(res.body.data.contactEnquiries.total).toBeGreaterThan(0);
     });
 
-    it('should return low stock products', async () => {
-      await createProduct({ name: 'Low Stock Product', stock: 2, minimumStock: 5 });
-      const res = await request(app)
-        .get('/api/admin/dashboard')
-        .set('Authorization', `Bearer ${adminToken}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.data.lowStockProducts).toBeGreaterThan(0);
-      expect(res.body.data.lowStockList).toBeDefined();
-    });
-
-    it('should support date range parameters', async () => {
+     it('should support date range parameters', async () => {
       const res = await request(app)
         .get('/api/admin/dashboard?dateRange=today')
         .set('Authorization', `Bearer ${adminToken}`);
@@ -280,6 +269,35 @@ describe('Sprint 5: Admin Dashboard', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.data.topCategories).toBeDefined();
+    });
+
+    it('should return categorySales for pie chart', async () => {
+      const res = await request(app)
+        .get('/api/admin/dashboard')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.categorySales).toBeDefined();
+      expect(Array.isArray(res.body.data.categorySales)).toBe(true);
+      if (res.body.data.categorySales.length > 0) {
+        const entry = res.body.data.categorySales[0];
+        expect(entry.category).toBeDefined();
+        expect(entry.revenue).toBeDefined();
+        expect(entry.quantitySold).toBeDefined();
+        expect(entry.orderCount).toBeDefined();
+      }
+    });
+
+    it('should not return inventory KPIs in dashboard data', async () => {
+      const res = await request(app)
+        .get('/api/admin/dashboard')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.lowStockProducts).toBeUndefined();
+      expect(res.body.data.lowStockList).toBeUndefined();
+      expect(res.body.data.outOfStockProducts).toBeUndefined();
+      expect(res.body.data.inventoryValue).toBeUndefined();
     });
   });
 });
@@ -546,6 +564,64 @@ describe('Sprint 5: Admin Order Management', () => {
 
       expect(res.status).toBe(401);
     });
+
+    it('should persist updated status to database', async () => {
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId, { status: 'new' });
+      await request(app)
+        .put(`/api/admin/orders/${order._id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'confirmed' });
+
+      const updated = await Order.findById(order._id);
+      expect(updated.status).toBe('confirmed');
+    });
+
+    it('should persist tracking number and courier', async () => {
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId, { status: 'packed' });
+      await request(app)
+        .put(`/api/admin/orders/${order._id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'shipped', trackingNumber: 'TRK-PERSIST', courier: 'Bluedart' });
+
+      const updated = await Order.findById(order._id);
+      expect(updated.trackingNumber).toBe('TRK-PERSIST');
+      expect(updated.courier).toBe('Bluedart');
+      expect(updated.shippingStatus).toBe('shipped');
+    });
+
+    it('should add entry to statusHistory when updating', async () => {
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId, { status: 'new' });
+      await request(app)
+        .put(`/api/admin/orders/${order._id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'confirmed', note: 'Processing order' });
+
+      const updated = await Order.findById(order._id);
+      expect(updated.statusHistory.length).toBeGreaterThan(0);
+      expect(updated.statusHistory[updated.statusHistory.length - 1].status).toBe('confirmed');
+      expect(updated.statusHistory[updated.statusHistory.length - 1].note).toBe('Processing order');
+    });
+
+    it('should update shippingStatus independently of order status', async () => {
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId, { status: 'packed' });
+      const res = await request(app)
+        .put(`/api/admin/orders/${order._id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ shippingStatus: 'ready_to_ship' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.shippingStatus).toBe('ready_to_ship');
+    });
+
+    it('should reject invalid shipping status', async () => {
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId, { status: 'new' });
+      const res = await request(app)
+        .put(`/api/admin/orders/${order._id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ shippingStatus: 'invalid_shipping' });
+
+      expect(res.status).toBe(400);
+    });
   });
 
   describe('GET /api/admin/orders/:id/invoice', () => {
@@ -801,6 +877,202 @@ describe('Sprint 5: Admin Contact Management', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data).toBeDefined();
       expect(res.body.data.total).toBeDefined();
+    });
+  });
+});
+
+describe('Sprint 5: Category Sales & Order Status', () => {
+  let adminToken;
+  let productId1;
+  let productId2;
+  let orderId;
+  let oldDateOrderId;
+
+  beforeAll(async () => {
+    await connect();
+    const admin = await createAdminUser();
+    adminToken = await loginAdmin();
+
+    await StoreSetting.deleteMany({});
+    await StoreSetting.create({ storeName: 'Test Store' });
+
+    productId1 = (await createProduct({ name: 'Ring Product', category: 'Rings', price: 10000 }))._id;
+    productId2 = (await createProduct({ name: 'Necklace Product', category: 'Necklaces', price: 20000 }))._id;
+
+    const order = await createOrder(new mongoose.Types.ObjectId(), productId1, { status: 'delivered' });
+    orderId = order._id;
+
+    const oldDate = new Date();
+    oldDate.setFullYear(oldDate.getFullYear() - 2);
+    oldDateOrderId = (await createOrder(new mongoose.Types.ObjectId(), productId1, {
+      status: 'delivered',
+      createdAt: oldDate,
+      updatedAt: oldDate,
+    }))._id;
+  });
+
+  afterAll(async () => {
+    await Order.deleteMany({});
+    await Product.deleteMany({});
+    await ContactEnquiry.deleteMany({});
+    await User.deleteMany({});
+    await StoreSetting.deleteMany({});
+    await close();
+  });
+
+  describe('Category Sales Aggregation', () => {
+    it('should return categorySales with real category names from products', async () => {
+      const res = await request(app)
+        .get('/api/admin/dashboard')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.categorySales).toBeDefined();
+      expect(Array.isArray(res.body.data.categorySales)).toBe(true);
+    });
+
+    it('should aggregate sales for multiple categories', async () => {
+      const multiItemOrder = await Order.create({
+        user: new mongoose.Types.ObjectId(),
+        items: [
+          { product: productId1, name: 'Ring', sku: 'SKU-R1', price: 10000, quantity: 2, gst: 18, lineTotal: 23600 },
+          { product: productId2, name: 'Necklace', sku: 'SKU-N1', price: 20000, quantity: 1, gst: 18, lineTotal: 23600 },
+        ],
+        shippingAddress: {
+          fullName: 'Test', phone: '999', address: 'St', city: 'NYC', state: 'NY', pincode: '10001',
+        },
+        billingAddress: {
+          fullName: 'Test', phone: '999', address: 'St', city: 'NYC', state: 'NY', pincode: '10001',
+        },
+        paymentMethod: 'cod',
+        itemsPrice: 40000,
+        taxPrice: 7200,
+        shippingPrice: 0,
+        discount: 0,
+        totalPrice: 47200,
+        status: 'delivered',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      const res = await request(app)
+        .get('/api/admin/dashboard')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      const categories = res.body.data.categorySales.map(c => c.category);
+      expect(categories).toContain('Rings');
+      expect(categories).toContain('Necklaces');
+    });
+
+    it('should handle orders with multiple items in the same category without double-counting', async () => {
+      const res = await request(app)
+        .get('/api/admin/dashboard')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      const ringsCat = res.body.data.categorySales.find(c => c.category === 'Rings');
+      expect(ringsCat).toBeDefined();
+      expect(ringsCat.quantitySold).toBeGreaterThan(0);
+      expect(ringsCat.revenue).toBeGreaterThan(0);
+    });
+
+    it('should respect date range filter', async () => {
+      const futureStart = new Date();
+      futureStart.setFullYear(futureStart.getFullYear() + 10);
+      const futureEnd = new Date();
+      futureEnd.setFullYear(futureEnd.getFullYear() + 10);
+
+      const res = await request(app)
+        .get('/api/admin/dashboard')
+        .query({ startDate: futureStart.toISOString(), endDate: futureEnd.toISOString() })
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.categorySales).toEqual([]);
+    });
+  });
+
+  describe('Order Status Update', () => {
+    it('should update order status and persist to database', async () => {
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId1, { status: 'new' });
+      const res = await request(app)
+        .put(`/api/admin/orders/${order._id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'processing' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe('processing');
+
+      const persisted = await Order.findById(order._id);
+      expect(persisted.status).toBe('processing');
+    });
+
+    it('should reject invalid status value', async () => {
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId1, { status: 'new' });
+      const res = await request(app)
+        .put(`/api/admin/orders/${order._id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'invalid_status' });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should sync shipping status when order is marked shipped', async () => {
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId1, { status: 'processing' });
+      const res = await request(app)
+        .put(`/api/admin/orders/${order._id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'shipped', trackingNumber: 'TRK-SYNC' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.shippingStatus).toBe('shipped');
+      expect(res.body.data.trackingNumber).toBe('TRK-SYNC');
+    });
+
+    it('should sync shipping status when order is marked delivered', async () => {
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId1, { status: 'shipped', shippingStatus: 'shipped' });
+      const res = await request(app)
+        .put(`/api/admin/orders/${order._id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'delivered' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.shippingStatus).toBe('delivered');
+      expect(res.body.data.isDelivered).toBe(true);
+    });
+
+    it('should preserve customer-visible order status in response', async () => {
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId1, { status: 'new' });
+      const res = await request(app)
+        .put(`/api/admin/orders/${order._id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ status: 'confirmed' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe('confirmed');
+      expect(res.body.data.statusHistory).toBeDefined();
+      expect(res.body.data.statusHistory.length).toBeGreaterThan(0);
+    });
+
+    it('should continue to support order list filtering and pagination', async () => {
+      const res = await request(app)
+        .get('/api/admin/orders?status=new&limit=5')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.page).toBeDefined();
+      expect(res.body.pages).toBeDefined();
+    });
+
+    it('should continue to support order search', async () => {
+      const res = await request(app)
+        .get(`/api/admin/orders?search=${orderId}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
     });
   });
 });

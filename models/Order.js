@@ -203,4 +203,7 @@ orderSchema.statics.VALID_STATUSES = [
   'delivered', 'cancelled', 'pending_payment',
 ];
 
+orderSchema.statics.VALID_PAYMENT_STATUSES = ['pending', 'paid', 'failed', 'refunded', 'partially_refunded'];
+orderSchema.statics.VALID_SHIPPING_STATUSES = ['not_shipped', 'ready_to_ship', 'shipped', 'out_for_delivery', 'delivered'];
+
 module.exports = mongoose.model('Order', orderSchema);

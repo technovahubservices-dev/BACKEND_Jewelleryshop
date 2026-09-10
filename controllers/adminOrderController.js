@@ -14,15 +14,6 @@ const ORDER_POPULATE = [
   { path: 'quotationId', select: 'quotationNumber status' },
 ];
 
-const VALID_ORDER_STATUSES = [
-  'new', 'confirmed', 'payment_received', 'processing',
-  'manufacturing', 'quality_check', 'packed', 'shipped',
-  'delivered', 'cancelled', 'pending_payment',
-];
-
-const VALID_PAYMENT_STATUSES = ['pending', 'paid', 'failed', 'refunded', 'partially_refunded'];
-const VALID_SHIPPING_STATUSES = ['not_shipped', 'ready_to_ship', 'shipped', 'out_for_delivery', 'delivered'];
-
 const buildAdminOrderResponse = (order) => {
   const plain = typeof order?.toObject === 'function'
     ? order.toObject()
@@ -141,7 +132,7 @@ exports.adminGetOrders = asyncHandler(async (req, res) => {
     const statusList = Array.isArray(status)
       ? status
       : String(status).split(',').map((s) => s.trim()).filter(Boolean);
-    const validStatuses = statusList.filter((s) => VALID_ORDER_STATUSES.includes(s));
+    const validStatuses = statusList.filter((s) => Order.VALID_STATUSES.includes(s));
     if (validStatuses.length > 0) {
       query.status = { $in: validStatuses };
     }
@@ -151,7 +142,7 @@ exports.adminGetOrders = asyncHandler(async (req, res) => {
     const psList = Array.isArray(paymentStatus)
       ? paymentStatus
       : String(paymentStatus).split(',').map((s) => s.trim()).filter(Boolean);
-    const validPs = psList.filter((p) => VALID_PAYMENT_STATUSES.includes(p));
+    const validPs = psList.filter((p) => Order.VALID_PAYMENT_STATUSES.includes(p));
     if (validPs.length > 0) {
       query.paymentStatus = { $in: validPs };
     }
@@ -161,7 +152,7 @@ exports.adminGetOrders = asyncHandler(async (req, res) => {
     const ssList = Array.isArray(shippingStatus)
       ? shippingStatus
       : String(shippingStatus).split(',').map((s) => s.trim()).filter(Boolean);
-    const validSs = ssList.filter((s) => VALID_SHIPPING_STATUSES.includes(s));
+    const validSs = ssList.filter((s) => Order.VALID_SHIPPING_STATUSES.includes(s));
     if (validSs.length > 0) {
       query.shippingStatus = { $in: validSs };
     }
@@ -253,17 +244,17 @@ exports.adminUpdateOrderStatus = asyncHandler(async (req, res) => {
     });
   }
 
-  if (status && !VALID_ORDER_STATUSES.includes(status)) {
+  if (status && !Order.VALID_STATUSES.includes(status)) {
     return res.status(400).json({
       success: false,
-      message: `Invalid status. Valid values: ${VALID_ORDER_STATUSES.join(', ')}`,
+      message: `Invalid status. Valid values: ${Order.VALID_STATUSES.join(', ')}`,
     });
   }
 
-  if (shippingStatus && !VALID_SHIPPING_STATUSES.includes(shippingStatus)) {
+  if (shippingStatus && !Order.VALID_SHIPPING_STATUSES.includes(shippingStatus)) {
     return res.status(400).json({
       success: false,
-      message: `Invalid shipping status. Valid values: ${VALID_SHIPPING_STATUSES.join(', ')}`,
+      message: `Invalid shipping status. Valid values: ${Order.VALID_SHIPPING_STATUSES.join(', ')}`,
     });
   }
 
