@@ -15,11 +15,16 @@ const contactEnquirySchema = mongoose.Schema(
       lowercase: true,
       match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email'],
     },
-    message: {
+     message: {
       type: String,
       required: [true, 'Message is required'],
       trim: true,
       maxlength: [5000, 'Message cannot exceed 5000 characters'],
+    },
+    phone: {
+      type: String,
+      trim: true,
+      maxlength: [30, 'Phone cannot exceed 30 characters'],
     },
     routedTo: {
       type: String,

@@ -8,8 +8,6 @@ const { sendInquiryEmail, isMailerConfigured } = require('../services/mailer');
 const {
   getContactEnquiries,
   getContactEnquiry,
-  updateContactStatus,
-  replyToEnquiry,
   CONTACT_STATUSES,
   CONTACT_STATUS_VALUES,
 } = require('../controllers/contactController');
@@ -23,8 +21,10 @@ const contactLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const skipLimiter = process.env.NODE_ENV === 'test';
+
 const submitContactEnquiry = [
-  contactLimiter,
+  skipLimiter ? (req, res, next) => next() : contactLimiter,
   asyncHandler(async (req, res) => {
     const { name, email, message, phone } = req.body || {};
 
@@ -55,6 +55,7 @@ const submitContactEnquiry = [
     const enquiry = await ContactEnquiry.create({
       name: String(name).trim().slice(0, 120),
       email: normalizedEmail,
+      phone: phone ? String(phone).trim().slice(0, 30) : '',
       message: String(message).trim().slice(0, 5000),
       routedTo: recipient,
     });
@@ -123,7 +124,5 @@ router.get('/admin/stats', asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: { total, byStatus: statusCounts } });
 }));
 router.get('/admin/:id', getContactEnquiry);
-router.put('/admin/:id/status', updateContactStatus);
-router.post('/admin/:id/reply', replyToEnquiry);
 
 module.exports = router;
