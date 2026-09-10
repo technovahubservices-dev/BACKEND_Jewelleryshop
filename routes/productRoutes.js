@@ -5,6 +5,7 @@ const {
   createProduct,
   getProducts,
   getProduct,
+  getProductBySku,
   updateProduct,
   deleteProduct,
   seedProducts,
@@ -20,8 +21,10 @@ router.route('/')
 
 router.get('/check-sku', checkSkuAvailability);
 router.get('/recently-viewed', protect, getRecentlyViewed);
-
 router.post('/seed', protect, admin, seedProducts);
+
+// SKU lookup must be registered BEFORE /:id to avoid :id matching 'sku'
+router.get('/sku/:sku', getProductBySku);
 
 router.route('/:id')
   .get(optionalProtect, getProduct)

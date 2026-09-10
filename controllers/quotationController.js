@@ -1,5 +1,6 @@
 const Quotation = require('../models/Quotation');
 const QuotationCounter = require('../models/QuotationCounter');
+const Product = require('../models/Product');
 const asyncHandler = require('express-async-handler');
 
 const QUOTATION_STATUSES = ['draft', 'sent', 'accepted', 'rejected', 'expired', 'converted'];
@@ -70,6 +71,47 @@ const normalizeQuotationItem = (raw, index = 0) => {
   };
 };
 
+// Resolve SKU on a quotation item to the real Product document.
+// Called when the client provides a SKU but (typically) no product ObjectId.
+// Auto-fills product reference, productName, and price from the product
+// only when the client has not already supplied those values.
+// Uses a single batch query to avoid N+1 lookups.
+const resolveQuotationItemSkus = async (items) => {
+  if (!Array.isArray(items) || items.length === 0) return items;
+
+  const skuSet = new Set();
+  for (const item of items) {
+    const sku = String(item.sku || '').trim();
+    if (sku) skuSet.add(sku);
+  }
+
+  if (skuSet.size === 0) return items;
+
+  const products = await Product.find({ sku: { $in: Array.from(skuSet) } }).lean();
+  const productMap = {};
+  products.forEach((p) => { productMap[String(p.sku)] = p; });
+
+  for (const item of items) {
+    const sku = String(item.sku || '').trim();
+    if (!sku) continue;
+
+    const product = productMap[sku];
+    if (!product) continue;
+
+    if (!item.product) {
+      item.product = product._id;
+    }
+    if (/^Item \d+$/.test(item.productName || '')) {
+      item.productName = product.name;
+    }
+    if (item.price === 0) {
+      item.price = product.discountPrice > 0 ? product.discountPrice : product.price;
+    }
+  }
+
+  return items;
+};
+
 const generateQuotationNumber = async () => {
   const year = new Date().getFullYear();
   const counter = await QuotationCounter.findOneAndUpdate(
@@ -128,17 +170,23 @@ exports.createQuotation = asyncHandler(async (req, res) => {
 
   const normalizedItems = items
     .map((item, idx) => normalizeQuotationItem(item, idx))
-    .filter(Boolean)
-    .map((item) => ({ ...item, lineTotal: computeLineTotal(item) }));
+    .filter(Boolean);
 
-  if (normalizedItems.length === 0) {
+  await resolveQuotationItemSkus(normalizedItems);
+
+  const itemsWithTotals = normalizedItems.map((item) => ({
+    ...item,
+    lineTotal: computeLineTotal(item),
+  }));
+
+  if (itemsWithTotals.length === 0) {
     return res.status(400).json({
       success: false,
       message: 'At least one valid item is required',
     });
   }
 
-  const totalAmount = computeQuotationTotal(normalizedItems);
+  const totalAmount = computeQuotationTotal(itemsWithTotals);
 
   const quotation = await Quotation.create({
     quotationNumber: qNumber,
@@ -150,7 +198,7 @@ exports.createQuotation = asyncHandler(async (req, res) => {
       address: String(customer.address || '').trim(),
     },
     validUntil,
-    items: normalizedItems,
+    items: itemsWithTotals,
     notes: notes || '',
     totalAmount,
     status: status || 'draft',
@@ -161,7 +209,7 @@ exports.createQuotation = asyncHandler(async (req, res) => {
   // render a fully-resolved preview without a second round-trip.
   const populated = await Quotation.findById(quotation._id).populate(
     'items.product',
-    'name sku metal purity weight price images primaryImage'
+    'name sku metal purity weight price discountPrice images primaryImage'
   );
 
   res.status(201).json({
@@ -194,7 +242,8 @@ exports.getAllQuotations = asyncHandler(async (req, res) => {
 
   const quotations = await Quotation.find(query)
     .sort({ createdAt: -1 })
-    .populate('items.product', 'name sku metal purity weight price images primaryImage');
+    .populate(    'items.product',
+    'name sku metal purity weight price discountPrice images primaryImage');
 
   res.status(200).json({
     success: true,
@@ -220,7 +269,7 @@ exports.getQuotationById = asyncHandler(async (req, res) => {
 
   const quotation = await Quotation.findById(req.params.id).populate(
     'items.product',
-    'name sku metal purity weight price images primaryImage'
+    'name sku metal purity weight price discountPrice images primaryImage'
   );
 
   if (!quotation) {
@@ -267,10 +316,17 @@ exports.updateQuotation = asyncHandler(async (req, res) => {
   if (items) {
     const normalizedItems = items
       .map((item, idx) => normalizeQuotationItem(item, idx))
-      .filter(Boolean)
-      .map((item) => ({ ...item, lineTotal: computeLineTotal(item) }));
-    quotation.items = normalizedItems;
-    quotation.totalAmount = computeQuotationTotal(normalizedItems);
+      .filter(Boolean);
+
+    await resolveQuotationItemSkus(normalizedItems);
+
+    const itemsWithTotals = normalizedItems.map((item) => ({
+      ...item,
+      lineTotal: computeLineTotal(item),
+    }));
+
+    quotation.items = itemsWithTotals;
+    quotation.totalAmount = computeQuotationTotal(itemsWithTotals);
   }
 
   if (status) {
@@ -299,7 +355,7 @@ exports.updateQuotation = asyncHandler(async (req, res) => {
 
   const populated = await Quotation.findById(quotation._id).populate(
     'items.product',
-    'name sku metal purity weight price images primaryImage'
+    'name sku metal purity weight price discountPrice images primaryImage'
   );
 
   res.status(200).json({

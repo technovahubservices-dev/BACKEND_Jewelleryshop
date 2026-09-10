@@ -315,8 +315,22 @@ exports.createProduct = async (req, res) => {
 
     if (!sku) {
       const skuPrefix = generateSKU(name, category, metal);
-      const skuNum = await getNextSkuNumber(skuPrefix);
-      sku = `${skuPrefix}-${skuNum}`;
+      let retries = 0;
+      while (retries < 5) {
+        const skuNum = await getNextSkuNumber(skuPrefix);
+        sku = `${skuPrefix}-${skuNum}`;
+
+        const existing = await Product.findOne({ sku });
+        if (!existing) break;
+
+        retries++;
+        if (retries >= 5) {
+          return res.status(400).json({
+            success: false,
+            message: 'Could not generate a unique SKU. Please provide a manual SKU.',
+          });
+        }
+      }
     }
 
     let parsedTags = tags;
@@ -422,6 +436,31 @@ exports.checkSkuAvailability = asyncHandler(async (req, res) => {
     success: true,
     available: !existingProduct,
     sku: sku.trim(),
+  });
+});
+
+exports.getProductBySku = asyncHandler(async (req, res) => {
+  const { sku } = req.params;
+
+  if (!sku || !sku.trim()) {
+    return res.status(400).json({
+      success: false,
+      message: 'SKU parameter is required',
+    });
+  }
+
+  const product = await Product.findOne({ sku: sku.trim() });
+
+  if (!product) {
+    return res.status(404).json({
+      success: false,
+      message: 'Product not found',
+    });
+  }
+
+  res.status(200).json({
+    success: true,
+    data: normalizeProductImages(product),
   });
 });
 
