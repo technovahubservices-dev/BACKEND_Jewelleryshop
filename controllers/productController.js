@@ -12,6 +12,7 @@ const { computeProductPrices } = require('../utils/discountCalculator');
 const VALID_COLLECTIONS = [
   'Heritage', 'Eternal', 'Blossom', 'Celeste', 'Aura',
   'New Arrival', 'Best Seller', 'Bridal', 'Wedding', 'Occasion',
+  'Fine Jewellery',
 ];
 
 const VALID_OCCASIONS = [
@@ -551,7 +552,10 @@ exports.getProducts = async (req, res) => {
     }
 
     if (purity) {
-      query.purity = String(purity);
+      const activeCollection = query.jewelleryCollection;
+      if (activeCollection !== 'Fine Jewellery') {
+        query.purity = String(purity);
+      }
     }
 
     if (diamondShape) {
@@ -683,9 +687,12 @@ exports.getProducts = async (req, res) => {
       '-_id',
       'discountPrice',
       '-discountPrice',
+      'recommended',
     ];
 
-    if (validSortFields.includes(sort)) {
+    if (sort === 'recommended') {
+      productsQuery = productsQuery.sort({ isFeatured: -1, isBestSeller: -1, rating: -1, createdAt: -1 });
+    } else if (validSortFields.includes(sort)) {
       productsQuery = productsQuery.sort(sort);
     } else {
       productsQuery = productsQuery.sort({ createdAt: -1 });

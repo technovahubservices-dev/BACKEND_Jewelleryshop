@@ -83,6 +83,7 @@ const productSchema = mongoose.Schema(
         'Bridal',
         'Wedding',
         'Occasion',
+        'Fine Jewellery',
       ],
     },
     occasion: {

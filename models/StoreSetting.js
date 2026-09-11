@@ -64,9 +64,13 @@ const storeSettingSchema = mongoose.Schema(
             type: Number,
             default: 0,
           },
-          isActive: {
+           isActive: {
             type: Boolean,
             default: true,
+          },
+          collapsedByDefault: {
+            type: Boolean,
+            default: false,
           },
         },
       ],

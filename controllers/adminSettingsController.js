@@ -23,6 +23,7 @@ const sanitizeSettings = (doc) => {
           icon: p.icon || '',
           sortOrder: p.sortOrder || 0,
           isActive: p.isActive !== undefined ? p.isActive : true,
+          collapsedByDefault: p.collapsedByDefault !== undefined ? p.collapsedByDefault : false,
         }))
     : [];
 
@@ -127,6 +128,7 @@ const updateAdminSettings = asyncHandler(async (req, res) => {
           icon: p.icon ? String(p.icon).trim() : '',
           sortOrder: typeof p.sortOrder === 'number' ? p.sortOrder : index + 1,
           isActive: p.isActive !== undefined ? p.isActive : true,
+          collapsedByDefault: p.collapsedByDefault !== undefined ? p.collapsedByDefault : false,
         };
       });
     } catch (validationError) {

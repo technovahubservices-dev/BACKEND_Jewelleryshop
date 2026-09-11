@@ -1,5 +1,9 @@
 const PDFDocument = require('pdfkit');
+const https = require('https');
+const http = require('http');
 const StoreSetting = require('../models/StoreSetting');
+const HomepageSetting = require('../models/HomepageSetting');
+const { normalizeGoogleDriveUrl, getGoogleDriveFileId, buildPublicDriveImageUrl } = require('../utils/googleDriveStorage');
 
 const formatCurrency = (amount, currency = 'INR') => {
   const num = Number(amount) || 0;
@@ -25,62 +29,135 @@ const computeSubtotal = (items) => {
   return items.reduce((sum, item) => sum + getLineTotal(item), 0);
 };
 
-const renderInvoice = (doc, data) => {
-  let y = 50;
+const fetchImageBuffer = (url, timeout = 5000) => {
+  return new Promise((resolve) => {
+    if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+      return resolve(null);
+    }
+    const lib = url.startsWith('https') ? https : http;
+    const req = lib.get(url, (res) => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
+        res.resume();
+        return resolve(fetchImageBuffer(res.headers.location, timeout));
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        return resolve(null);
+      }
+      const data = [];
+      res.on('data', (chunk) => data.push(chunk));
+      res.on('end', () => resolve(Buffer.concat(data)));
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(timeout, () => {
+      req.destroy();
+      resolve(null);
+    });
+  });
+};
 
-  doc.fontSize(20).font('Helvetica-Bold')
-    .text(data.storeName, 50, y);
-  doc.fontSize(10).font('Helvetica')
-    .text(data.storeEmail, 50, y + 15)
-    .text(data.storePhone, 50, y + 28);
+const resolveLogoUrl = (logoUrl) => {
+  if (!logoUrl || typeof logoUrl !== 'string') return '';
+  const trimmed = logoUrl.trim();
+  if (!trimmed) return '';
 
-  doc.fontSize(14).font('Helvetica-Bold')
-    .text('INVOICE', 400, y, { align: 'right' });
-  doc.fontSize(10).font('Helvetica')
-    .text(`Invoice #: ${data.invoiceNumber}`, 400, y + 18, { align: 'right' })
-    .text(`Order #: ${data.orderNumber}`, 400, y + 30, { align: 'right' })
-    .text(`Invoice Date: ${new Date(data.invoiceDate).toLocaleDateString('en-IN')}`, 400, y + 42, { align: 'right' })
-    .text(`Order Date: ${new Date(data.orderDate).toLocaleDateString('en-IN')}`, 400, y + 54, { align: 'right' });
-
-  y += 85;
-
-  doc.fontSize(11).font('Helvetica-Bold').text('Bill To:', 50, y);
-  doc.fontSize(10).font('Helvetica')
-    .text(data.customerName, 50, y + 14)
-    .text(data.billingAddress, 50, y + 26)
-    .text(`Phone: ${data.phone}`, 50, y + 50)
-    .text(`Email: ${data.customerEmail || 'N/A'}`, 50, y + 62);
-
-  y += 95;
-
-  if (data.shippingAddress !== data.billingAddress) {
-    doc.fontSize(11).font('Helvetica-Bold').text('Ship To:', 50, y);
-    doc.fontSize(10).font('Helvetica')
-      .text(data.customerName, 50, y + 14)
-      .text(data.shippingAddress, 50, y + 26)
-      .text(`Phone: ${data.phone}`, 50, y + 50);
-    y += 80;
+  if (/^https?:\/\//i.test(trimmed)) {
+    const fileId = getGoogleDriveFileId(trimmed);
+    if (fileId) {
+      return buildPublicDriveImageUrl(fileId);
+    }
+    return normalizeGoogleDriveUrl(trimmed);
   }
 
-  y += 20;
+  if (trimmed.startsWith('/')) {
+    return trimmed;
+  }
+
+  return trimmed;
+};
+
+const renderInvoice = (doc, data) => {
+  const leftMargin = 50;
+  const rightColX = 390;
+  let y = 50;
+
+  const logoX = leftMargin;
+  const logoY = y;
+  const nameX = data.storeLogo ? leftMargin + 75 : leftMargin;
+
+  doc.fontSize(20).font('Helvetica-Bold')
+    .text(data.storeName, nameX, y);
+  doc.fontSize(10).font('Helvetica')
+    .text(data.storeEmail, nameX, y + 16)
+    .text(data.storePhone, nameX, y + 30);
+
+  doc.fontSize(14).font('Helvetica-Bold')
+    .text('INVOICE', rightColX, y, { align: 'right' });
+  doc.fontSize(10).font('Helvetica')
+    .text(`Invoice #: ${data.invoiceNumber}`, rightColX, y + 16, { align: 'right' })
+    .text(`Order #: ${data.orderNumber}`, rightColX, y + 30, { align: 'right' })
+    .text(`Invoice Date: ${new Date(data.invoiceDate).toLocaleDateString('en-IN')}`, rightColX, y + 44, { align: 'right' })
+    .text(`Order Date: ${new Date(data.orderDate).toLocaleDateString('en-IN')}`, rightColX, y + 58, { align: 'right' });
+
+  y = 145;
+
+  if (data.logoBuffer) {
+    try {
+      doc.image(data.logoBuffer, logoX, logoY, { width: 60, height: 40, valign: 'top' });
+      y = Math.max(y, logoY + 45);
+    } catch (e) {
+      y = 145;
+    }
+  }
+
+  doc.fontSize(11).font('Helvetica-Bold').text('Bill To:', leftMargin, y);
+  doc.fontSize(10).font('Helvetica')
+    .text(data.customerName, leftMargin, y + 14)
+    .text(data.billingAddress, leftMargin, y + 26, { width: 280 });
+
+  let shipY = y + 44;
+  doc.fontSize(10).font('Helvetica')
+    .text(`Phone: ${data.phone}`, leftMargin, shipY)
+    .text(`Email: ${data.customerEmail || 'N/A'}`, leftMargin, shipY + 14);
+
+  y = shipY + 34;
+
+  if (data.shippingAddress && data.shippingAddress !== data.billingAddress) {
+    doc.fontSize(11).font('Helvetica-Bold').text('Ship To:', leftMargin, y);
+    doc.fontSize(10).font('Helvetica')
+      .text(data.customerName, leftMargin, y + 14)
+      .text(data.shippingAddress, leftMargin, y + 26, { width: 280 });
+
+    y += 44;
+    doc.fontSize(10).font('Helvetica')
+      .text(`Phone: ${data.phone}`, leftMargin, y)
+      .text(`Email: ${data.customerEmail || 'N/A'}`, leftMargin, y + 14);
+
+    y += 34;
+  }
+
+  y += 15;
 
   const tableTop = y;
+  const pageWidth = 595;
+  const rightEdge = pageWidth - rightColX;
+  const tableWidth = rightEdge - leftMargin;
 
   doc.fontSize(9).font('Helvetica-Bold');
   const headers = ['Product', 'SKU', 'Qty', 'Unit Price', 'Discount', 'GST', 'Total'];
-  const colWidths = [180, 60, 30, 60, 50, 50, 60];
+  const colWidths = [150, 50, 28, 58, 50, 48, 55];
+  const colGap = 5;
 
-  let x = 50;
+  let x = leftMargin;
   headers.forEach((header, i) => {
-    doc.text(header, x, tableTop, { width: colWidths[i], align: i > 0 ? 'right' : 'left' });
-    x += colWidths[i] + 10;
+    doc.text(header, x, tableTop, { width: colWidths[i], align: i === 0 ? 'left' : 'right' });
+    x += colWidths[i] + colGap;
   });
 
-  y = tableTop + 15;
+  y = tableTop + 17;
   doc.fontSize(8).font('Helvetica');
 
   data.items.forEach((item) => {
-    x = 50;
     const row = [
       item.name,
       item.sku || '-',
@@ -91,26 +168,31 @@ const renderInvoice = (doc, data) => {
       formatCurrency(getLineTotal(item), data.currency),
     ];
 
-    const maxRows = Math.max(1, Math.ceil(row[0].length / 22));
+    const productNameWidth = colWidths[0];
+    const charPerLine = Math.max(1, Math.floor(productNameWidth / 6.5));
+    const maxRows = Math.max(1, Math.ceil((row[0].length || 1) / charPerLine));
 
+    let cellX = leftMargin;
     row.forEach((cell, i) => {
-      doc.text(cell, x, y, { width: colWidths[i], align: i > 0 ? 'right' : 'left' });
-      x += colWidths[i] + 10;
+      doc.text(cell, cellX, y, { width: colWidths[i], align: i === 0 ? 'left' : 'right' });
+      cellX += colWidths[i] + colGap;
     });
 
-    y += 18 * maxRows;
+    y += 16 * maxRows;
   });
 
-  y += 10;
-  doc.moveTo(50, y).lineTo(550, y).stroke();
+  y += 8;
+  doc.moveTo(leftMargin, y).lineTo(leftMargin + tableWidth, y).stroke();
   y += 15;
 
-  const summaryX = 300;
+  const summaryRight = leftMargin + tableWidth;
+  const labelX = summaryRight - 100;
+  const valueX = summaryRight - 10;
   doc.fontSize(10).font('Helvetica');
 
   const addSummaryLine = (label, value) => {
-    doc.text(label, summaryX, y, { align: 'right' });
-    doc.text(formatCurrency(value, data.currency), summaryX + 130, y, { align: 'right' });
+    doc.text(label, labelX, y, { align: 'right' });
+    doc.text(formatCurrency(value, data.currency), valueX, y, { align: 'right' });
     y += 16;
   };
 
@@ -120,38 +202,47 @@ const renderInvoice = (doc, data) => {
   addSummaryLine('Shipping:', data.shippingCharges);
 
   y += 5;
-  doc.moveTo(summaryX, y).lineTo(550, y).stroke();
+  doc.moveTo(labelX, y).lineTo(summaryRight, y).stroke();
   y += 10;
 
   doc.fontSize(12).font('Helvetica-Bold');
-  doc.text('Grand Total:', summaryX, y, { align: 'right' });
-  doc.text(formatCurrency(data.grandTotal, data.currency), summaryX + 130, y, { align: 'right' });
+  doc.text('Grand Total:', labelX, y, { align: 'right' });
+  doc.text(formatCurrency(data.grandTotal, data.currency), valueX, y, { align: 'right' });
 
   y += 25;
   doc.fontSize(10).font('Helvetica');
-  doc.text(`Payment Method: ${data.paymentMethod.toUpperCase()}`, 50, y);
-  doc.text(`Payment Status: ${data.paymentStatus}`, 50, y + 14);
-  doc.text(`Order Status: ${data.orderStatus}`, 50, y + 28);
+  doc.text(`Payment Method: ${data.paymentMethod.toUpperCase()}`, leftMargin, y);
+  doc.text(`Payment Status: ${data.paymentStatus}`, leftMargin + 130, y);
+  doc.text(`Order Status: ${data.orderStatus}`, leftMargin + 260, y);
   if (data.trackingNumber) {
-    doc.text(`Tracking No: ${data.trackingNumber}`, 50, y + 42);
+    doc.text(`Tracking No: ${data.trackingNumber}`, leftMargin + 390, y);
   }
 
-  y += 70;
+  y += 25;
   doc.fontSize(8).font('Helvetica')
-    .text('Thank you for your order!', 50, y, { align: 'center' })
-    .text('This is a computer-generated invoice.', 50, y + 14, { align: 'center' });
+    .text('Thank you for your order!', 0, y, { align: 'center' })
+    .text('This is a computer-generated invoice.', 0, y + 14, { align: 'center' });
 
   doc.end();
 };
 
 const buildInvoiceData = async (order) => {
-  const storeSettings = await StoreSetting.getSettings();
+  const [storeSettings, homepageSettings] = await Promise.all([
+    StoreSetting.getSettings(),
+    HomepageSetting.getSettings(),
+  ]);
 
   const plainOrder = typeof order?.toObject === 'function'
     ? order.toObject()
     : { ...order };
 
   const currency = storeSettings.currency || 'INR';
+  const logoUrl = resolveLogoUrl(homepageSettings.footerLogoUrl);
+
+  let logoBuffer = null;
+  if (logoUrl && /^https?:\/\//i.test(logoUrl)) {
+    logoBuffer = await fetchImageBuffer(logoUrl);
+  }
 
   const items = (plainOrder.items || []).map((item) => {
     const qty = Number(item.quantity) || 0;
@@ -197,7 +288,9 @@ const buildInvoiceData = async (order) => {
   return {
     storeName: storeSettings.storeName || 'Jewellery Shop',
     storeEmail: storeSettings.email || '',
-    storePhone: storeSettings.phone || '',
+     storePhone: storeSettings.phone || '',
+    storeLogo: logoUrl || '',
+    logoBuffer,
     currency,
     invoiceNumber: plainOrder.invoiceNumber || '',
     orderNumber: plainOrder.orderNumber || '',
@@ -270,6 +363,8 @@ module.exports = {
   generateInvoicePDF,
   streamInvoiceToResponse,
   buildInvoiceData,
+  resolveLogoUrl,
+  fetchImageBuffer,
   formatCurrency,
   getLineTotal,
 };
