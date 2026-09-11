@@ -64,6 +64,17 @@ const normalizeProductImages = (product) => {
       normalizeImage(img, index)
     );
     plainProduct.images.sort((a, b) => (a.order || 0) - (b.order || 0));
+    if (!plainProduct.primaryImage && plainProduct.images.length > 0) {
+      plainProduct.primaryImage = plainProduct.images[0].url || '';
+    }
+  } else if (Array.isArray(plainProduct.imageUrls)) {
+    plainProduct.images = plainProduct.imageUrls.map((url, index) =>
+      normalizeImage(url, index)
+    );
+    plainProduct.images.sort((a, b) => (a.order || 0) - (b.order || 0));
+    if (!plainProduct.primaryImage && plainProduct.images.length > 0) {
+      plainProduct.primaryImage = plainProduct.images[0].url || '';
+    }
   }
 
   if (plainProduct.primaryImage) {
@@ -119,9 +130,12 @@ const generateSKU = (name, category, metal) => {
 
 const getNextSkuNumber = async (skuPrefix) => {
   const regex = new RegExp(`^${skuPrefix}-(\\d{3})$`);
-  const lastProduct = await Product.findOne({
-    sku: regex,
-  }).sort({ createdAt: -1 });
+  const products = await Product.find({ sku: regex }).select('sku').lean();
+  const lastProduct = products.sort((a, b) => {
+    const aNum = parseInt(a.sku.match(regex)?.[1] || '0', 10);
+    const bNum = parseInt(b.sku.match(regex)?.[1] || '0', 10);
+    return bNum - aNum;
+  })[0];
 
   let num = 1;
   if (lastProduct) {
@@ -298,7 +312,7 @@ exports.createProduct = async (req, res) => {
       }
       if (typeof img === 'object' && img !== null) {
         return {
-          url: normalizeGoogleDriveUrl(img.url || ''),
+          url: normalizeGoogleDriveUrl(img.url || img.imageUrl || img.src || img.path || ''),
           alt: img.alt || '',
           order: img.order !== undefined ? img.order : 0,
         };
@@ -924,6 +938,7 @@ exports.updateProduct = async (req, res) => {
       } else if (Array.isArray(imageUrls)) {
         newImageUrls = imageUrls.map(extractImageUrl);
       }
+      newImageUrls = newImageUrls.map(extractImageUrl);
     } else {
       newImageUrls = (product.images || []).map(extractImageUrl);
     }
@@ -1054,9 +1069,10 @@ exports.deleteProduct = async (req, res) => {
       });
     }
 
+    const driveUrls = (product.images || []).map(extractImageUrl);
     await deleteDriveFilesForUrls({
       userId: req.user._id,
-      urls: product.images || [],
+      urls: driveUrls,
     });
     await product.deleteOne();
 
@@ -1445,3 +1461,4 @@ exports.getRecentlyViewed = asyncHandler(async (req, res) => {
     });
   }
 });
+

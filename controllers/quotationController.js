@@ -64,7 +64,7 @@ const normalizeQuotationItem = (raw, index = 0) => {
     product: productId,
     productName,
     sku: String(raw.sku || '').trim(),
-    qty: num(raw.qty ?? raw.quantity, 1) || 1,
+    qty: num(raw.qty ?? raw.quantity, 1),
     price: num(raw.price, 0),
     discount: num(raw.discount, 0),
     gst: num(raw.gst, 18),

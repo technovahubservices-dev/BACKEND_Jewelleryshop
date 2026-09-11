@@ -224,7 +224,7 @@ productSchema.pre('save', function (next) {
       }
       if (typeof img === 'object' && img !== null) {
         return {
-          url: img.url || '',
+          url: (img.url || img.imageUrl || img.src || img.path) || '',
           alt: img.alt || '',
           order: img.order !== undefined ? img.order : index,
         };
