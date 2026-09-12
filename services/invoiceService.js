@@ -77,151 +77,450 @@ const resolveLogoUrl = (logoUrl) => {
 };
 
 const renderInvoice = (doc, data) => {
+  const pageWidth = 595;
+  const pageHeight = 842;
+
   const leftMargin = 50;
-  const rightColX = 390;
+  const rightMargin = 50;
+  const contentWidth = pageWidth - leftMargin - rightMargin;
+
   let y = 50;
+
+  // ==========================================
+  // HEADER
+  // ==========================================
 
   const logoX = leftMargin;
   const logoY = y;
-  const nameX = data.storeLogo ? leftMargin + 75 : leftMargin;
 
-  doc.fontSize(20).font('Helvetica-Bold')
-    .text(data.storeName, nameX, y);
-  doc.fontSize(10).font('Helvetica')
-    .text(data.storeEmail, nameX, y + 16)
-    .text(data.storePhone, nameX, y + 30);
+  const nameX = data.storeLogo
+    ? leftMargin + 75
+    : leftMargin;
 
-  doc.fontSize(14).font('Helvetica-Bold')
-    .text('INVOICE', rightColX, y, { align: 'right' });
-  doc.fontSize(10).font('Helvetica')
-    .text(`Invoice #: ${data.invoiceNumber}`, rightColX, y + 16, { align: 'right' })
-    .text(`Order #: ${data.orderNumber}`, rightColX, y + 30, { align: 'right' })
-    .text(`Invoice Date: ${new Date(data.invoiceDate).toLocaleDateString('en-IN')}`, rightColX, y + 44, { align: 'right' })
-    .text(`Order Date: ${new Date(data.orderDate).toLocaleDateString('en-IN')}`, rightColX, y + 58, { align: 'right' });
+  doc
+    .fontSize(20)
+    .font('Helvetica-Bold')
+    .text(data.storeName || 'Jewellery Shop', nameX, y);
+
+  doc
+    .fontSize(10)
+    .font('Helvetica')
+    .text(data.storeEmail || '', nameX, y + 16)
+    .text(data.storePhone || '', nameX, y + 30);
+
+  const rightColX = 390;
+  const rightColWidth = 155;
+
+  doc
+    .fontSize(14)
+    .font('Helvetica-Bold')
+    .text('INVOICE', rightColX, y, {
+      width: rightColWidth,
+      align: 'right',
+    });
+
+  doc
+    .fontSize(10)
+    .font('Helvetica')
+    .text(`Invoice #: ${data.invoiceNumber || '-'}`, rightColX, y + 16, {
+      width: rightColWidth,
+      align: 'right',
+    })
+    .text(`Order #: ${data.orderNumber || '-'}`, rightColX, y + 30, {
+      width: rightColWidth,
+      align: 'right',
+    })
+    .text(
+      `Invoice Date: ${new Date(data.invoiceDate).toLocaleDateString('en-IN')}`,
+      rightColX,
+      y + 44,
+      {
+        width: rightColWidth,
+        align: 'right',
+      }
+    )
+    .text(
+      `Order Date: ${new Date(data.orderDate).toLocaleDateString('en-IN')}`,
+      rightColX,
+      y + 58,
+      {
+        width: rightColWidth,
+        align: 'right',
+      }
+    );
 
   y = 145;
 
+  // ==========================================
+  // LOGO
+  // ==========================================
+
   if (data.logoBuffer) {
     try {
-      doc.image(data.logoBuffer, logoX, logoY, { width: 60, height: 40, valign: 'top' });
+      doc.image(data.logoBuffer, logoX, logoY, {
+        width: 60,
+        height: 40,
+        valign: 'top',
+      });
+
       y = Math.max(y, logoY + 45);
     } catch (e) {
-      y = 145;
+      // Ignore invalid logo
     }
   }
 
-  doc.fontSize(11).font('Helvetica-Bold').text('Bill To:', leftMargin, y);
-  doc.fontSize(10).font('Helvetica')
-    .text(data.customerName, leftMargin, y + 14)
-    .text(data.billingAddress, leftMargin, y + 26, { width: 280 });
+  // ==========================================
+  // BILL TO
+  // ==========================================
+
+  doc
+    .fontSize(11)
+    .font('Helvetica-Bold')
+    .text('Bill To:', leftMargin, y);
+
+  doc
+    .fontSize(10)
+    .font('Helvetica')
+    .text(data.customerName || '', leftMargin, y + 14)
+    .text(data.billingAddress || '', leftMargin, y + 26, {
+      width: 280,
+    });
 
   let shipY = y + 44;
-  doc.fontSize(10).font('Helvetica')
-    .text(`Phone: ${data.phone}`, leftMargin, shipY)
-    .text(`Email: ${data.customerEmail || 'N/A'}`, leftMargin, shipY + 14);
+
+  doc
+    .fontSize(10)
+    .font('Helvetica')
+    .text(`Phone: ${data.phone || ''}`, leftMargin, shipY)
+    .text(
+      `Email: ${data.customerEmail || 'N/A'}`,
+      leftMargin,
+      shipY + 14
+    );
 
   y = shipY + 34;
 
-  if (data.shippingAddress && data.shippingAddress !== data.billingAddress) {
-    doc.fontSize(11).font('Helvetica-Bold').text('Ship To:', leftMargin, y);
-    doc.fontSize(10).font('Helvetica')
-      .text(data.customerName, leftMargin, y + 14)
-      .text(data.shippingAddress, leftMargin, y + 26, { width: 280 });
+  // ==========================================
+  // SHIPPING ADDRESS
+  // ==========================================
+
+  if (
+    data.shippingAddress &&
+    data.shippingAddress !== data.billingAddress
+  ) {
+    doc
+      .fontSize(11)
+      .font('Helvetica-Bold')
+      .text('Ship To:', leftMargin, y);
+
+    doc
+      .fontSize(10)
+      .font('Helvetica')
+      .text(data.customerName || '', leftMargin, y + 14)
+      .text(data.shippingAddress, leftMargin, y + 26, {
+        width: 280,
+      });
 
     y += 44;
-    doc.fontSize(10).font('Helvetica')
-      .text(`Phone: ${data.phone}`, leftMargin, y)
-      .text(`Email: ${data.customerEmail || 'N/A'}`, leftMargin, y + 14);
+
+    doc
+      .fontSize(10)
+      .font('Helvetica')
+      .text(`Phone: ${data.phone || ''}`, leftMargin, y)
+      .text(
+        `Email: ${data.customerEmail || 'N/A'}`,
+        leftMargin,
+        y + 14
+      );
 
     y += 34;
   }
 
   y += 15;
 
-  const tableTop = y;
-  const pageWidth = 595;
-  const rightEdge = pageWidth - rightColX;
-  const tableWidth = rightEdge - leftMargin;
+  // ==========================================
+  // PRODUCT TABLE
+  // ==========================================
 
-  doc.fontSize(9).font('Helvetica-Bold');
-  const headers = ['Product', 'SKU', 'Qty', 'Unit Price', 'Discount', 'GST', 'Total'];
-  const colWidths = [150, 50, 28, 58, 50, 48, 55];
+  const tableTop = y;
+
+  const headers = [
+    'Product',
+    'SKU',
+    'Qty',
+    'Unit Price',
+    'Discount',
+    'GST',
+    'Total',
+  ];
+
+  // Total = 469 points including gaps
+  const colWidths = [
+    150, // Product
+    50,  // SKU
+    28,  // Qty
+    58,  // Unit Price
+    50,  // Discount
+    48,  // GST
+    55,  // Total
+  ];
+
   const colGap = 5;
 
+  doc
+    .fontSize(9)
+    .font('Helvetica-Bold');
+
   let x = leftMargin;
+
   headers.forEach((header, i) => {
-    doc.text(header, x, tableTop, { width: colWidths[i], align: i === 0 ? 'left' : 'right' });
+    doc.text(header, x, tableTop, {
+      width: colWidths[i],
+      align: i === 0 ? 'left' : 'right',
+      lineBreak: false,
+    });
+
     x += colWidths[i] + colGap;
   });
 
   y = tableTop + 17;
-  doc.fontSize(8).font('Helvetica');
+
+  doc
+    .fontSize(8)
+    .font('Helvetica');
 
   data.items.forEach((item) => {
     const row = [
-      item.name,
+      item.name || 'Product',
       item.sku || '-',
-      String(item.quantity),
+      String(item.quantity || 0),
       formatCurrency(item.unitPrice, data.currency),
-      `${item.discountPercent}%`,
-      `${item.gstPercent}%`,
+      `${item.discountPercent || 0}%`,
+      `${item.gstPercent || 0}%`,
       formatCurrency(getLineTotal(item), data.currency),
     ];
 
     const productNameWidth = colWidths[0];
-    const charPerLine = Math.max(1, Math.floor(productNameWidth / 6.5));
-    const maxRows = Math.max(1, Math.ceil((row[0].length || 1) / charPerLine));
+
+    const charPerLine = Math.max(
+      1,
+      Math.floor(productNameWidth / 6.5)
+    );
+
+    const maxRows = Math.max(
+      1,
+      Math.ceil((row[0].length || 1) / charPerLine)
+    );
 
     let cellX = leftMargin;
+
     row.forEach((cell, i) => {
-      doc.text(cell, cellX, y, { width: colWidths[i], align: i === 0 ? 'left' : 'right' });
+      doc.text(String(cell), cellX, y, {
+        width: colWidths[i],
+        align: i === 0 ? 'left' : 'right',
+        lineBreak: false,
+      });
+
       cellX += colWidths[i] + colGap;
     });
 
     y += 16 * maxRows;
   });
 
+  // ==========================================
+  // TABLE BOTTOM LINE
+  // ==========================================
+
   y += 8;
-  doc.moveTo(leftMargin, y).lineTo(leftMargin + tableWidth, y).stroke();
+
+  const actualTableWidth =
+    colWidths.reduce((sum, width) => sum + width, 0) +
+    colGap * (colWidths.length - 1);
+
+  doc
+    .moveTo(leftMargin, y)
+    .lineTo(leftMargin + actualTableWidth, y)
+    .stroke();
+
   y += 15;
 
-  const summaryRight = leftMargin + tableWidth;
-  const labelX = summaryRight - 100;
-  const valueX = summaryRight - 10;
-  doc.fontSize(10).font('Helvetica');
+  // ==========================================
+  // TOTALS
+  // ==========================================
 
-  const addSummaryLine = (label, value) => {
-    doc.text(label, labelX, y, { align: 'right' });
-    doc.text(formatCurrency(value, data.currency), valueX, y, { align: 'right' });
-    y += 16;
+  const totalsWidth = 220;
+
+  const totalsX =
+    pageWidth -
+    rightMargin -
+    totalsWidth;
+
+  const labelWidth = 130;
+  const valueWidth = 90;
+  const totalsGap = 5;
+
+  let totalsY = y;
+
+  const drawTotalRow = (label, value) => {
+    doc
+      .fontSize(10)
+      .font('Helvetica');
+
+    // Label
+    doc.text(
+      label,
+      totalsX,
+      totalsY,
+      {
+        width: labelWidth,
+        align: 'right',
+        lineBreak: false,
+      }
+    );
+
+    // Amount
+    doc.text(
+      formatCurrency(value, data.currency),
+      totalsX + labelWidth + totalsGap,
+      totalsY,
+      {
+        width: valueWidth - totalsGap,
+        align: 'right',
+        lineBreak: false,
+      }
+    );
+
+    totalsY += 18;
   };
 
-  addSummaryLine('Subtotal:', data.subtotal);
-  addSummaryLine('Discount:', -data.totalDiscount);
-  addSummaryLine('GST:', data.totalGst);
-  addSummaryLine('Shipping:', data.shippingCharges);
+  // Subtotal
+  drawTotalRow(
+    'Subtotal:',
+    data.subtotal
+  );
 
-  y += 5;
-  doc.moveTo(labelX, y).lineTo(summaryRight, y).stroke();
-  y += 10;
-
-  doc.fontSize(12).font('Helvetica-Bold');
-  doc.text('Grand Total:', labelX, y, { align: 'right' });
-  doc.text(formatCurrency(data.grandTotal, data.currency), valueX, y, { align: 'right' });
-
-  y += 25;
-  doc.fontSize(10).font('Helvetica');
-  doc.text(`Payment Method: ${data.paymentMethod.toUpperCase()}`, leftMargin, y);
-  doc.text(`Payment Status: ${data.paymentStatus}`, leftMargin + 130, y);
-  doc.text(`Order Status: ${data.orderStatus}`, leftMargin + 260, y);
-  if (data.trackingNumber) {
-    doc.text(`Tracking No: ${data.trackingNumber}`, leftMargin + 390, y);
+  // Discount
+  if (Number(data.totalDiscount) > 0) {
+    drawTotalRow(
+      'Discount:',
+      -Number(data.totalDiscount)
+    );
   }
 
-  y += 25;
-  doc.fontSize(8).font('Helvetica')
-    .text('Thank you for your order!', 0, y, { align: 'center' })
-    .text('This is a computer-generated invoice.', 0, y + 14, { align: 'center' });
+  // GST
+  drawTotalRow(
+    'GST:',
+    data.totalGst
+  );
+
+  // Shipping
+  drawTotalRow(
+    'Shipping:',
+    data.shippingCharges
+  );
+
+  // ==========================================
+  // GRAND TOTAL
+  // ==========================================
+
+  totalsY += 5;
+
+  doc
+    .moveTo(totalsX, totalsY)
+    .lineTo(totalsX + totalsWidth, totalsY)
+    .stroke();
+
+  totalsY += 10;
+
+  doc
+    .fontSize(12)
+    .font('Helvetica-Bold');
+
+  doc.text(
+    'Grand Total:',
+    totalsX,
+    totalsY,
+    {
+      width: labelWidth,
+      align: 'right',
+      lineBreak: false,
+    }
+  );
+
+  doc.text(
+    formatCurrency(data.grandTotal, data.currency),
+    totalsX + labelWidth + totalsGap,
+    totalsY,
+    {
+      width: valueWidth - totalsGap,
+      align: 'right',
+      lineBreak: false,
+    }
+  );
+
+  // ==========================================
+  // PAYMENT / ORDER STATUS
+  // ==========================================
+
+  totalsY += 30;
+
+  doc
+    .fontSize(10)
+    .font('Helvetica');
+
+  doc.text(
+    `Payment Method: ${(data.paymentMethod || 'cod').toUpperCase()}`,
+    leftMargin,
+    totalsY
+  );
+
+  doc.text(
+    `Payment Status: ${data.paymentStatus || 'pending'}`,
+    leftMargin + 130,
+    totalsY
+  );
+
+  doc.text(
+    `Order Status: ${data.orderStatus || 'new'}`,
+    leftMargin + 260,
+    totalsY
+  );
+
+  if (data.trackingNumber) {
+    doc.text(
+      `Tracking No: ${data.trackingNumber}`,
+      leftMargin + 390,
+      totalsY
+    );
+  }
+
+  // ==========================================
+  // FOOTER
+  // ==========================================
+
+  totalsY += 25;
+
+  doc
+    .fontSize(8)
+    .font('Helvetica')
+    .text(
+      'Thank you for your order!',
+      0,
+      totalsY,
+      {
+        width: pageWidth,
+        align: 'center',
+      }
+    )
+    .text(
+      'This is a computer-generated invoice.',
+      0,
+      totalsY + 14,
+      {
+        width: pageWidth,
+        align: 'center',
+      }
+    );
 
   doc.end();
 };
@@ -318,7 +617,10 @@ const generateInvoicePDF = async (order) => {
   const data = await buildInvoiceData(order);
 
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 50 });
+    const doc = new PDFDocument({
+  size: 'A4',
+  margin: 50,
+});
     const chunks = [];
 
     doc.on('data', (chunk) => chunks.push(chunk));
@@ -338,7 +640,10 @@ const streamInvoiceToResponse = async (order, res) => {
   );
   res.setHeader('Content-Transfer-Encoding', 'binary');
 
-  const doc = new PDFDocument({ margin: 50 });
+  const doc = new PDFDocument({
+  size: 'A4',
+  margin: 50,
+});
 
   doc.on('data', (chunk) => {
     if (!res.write(chunk)) {
