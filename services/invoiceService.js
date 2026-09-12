@@ -7,12 +7,17 @@ const { normalizeGoogleDriveUrl, getGoogleDriveFileId, buildPublicDriveImageUrl 
 
 const formatCurrency = (amount, currency = 'INR') => {
   const num = Number(amount) || 0;
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency,
+
+  const formatted = new Intl.NumberFormat('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(num);
+
+  if (currency === 'INR') {
+    return `Rs. ${formatted}`;
+  }
+
+  return `${currency} ${formatted}`;
 };
 
 const getLineTotal = (item) => {
