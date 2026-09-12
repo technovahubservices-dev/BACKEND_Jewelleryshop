@@ -1,369 +1,1319 @@
-const Order = require('../models/Order');
-const User = require('../models/User');
-const mongoose = require('mongoose');
-const asyncHandler = require('express-async-handler');
-const { streamInvoiceToResponse } = require('../services/invoiceService');
-const { sendOrderStatusNotificationEmail } = require('../services/mailer');
+const PDFDocument = require('pdfkit');
+const https = require('https');
+const http = require('http');
 
-const ORDER_POPULATE = [
-  { path: 'user', select: 'name email phone' },
-  {
-    path: 'items.product',
-    select: 'name sku price discountPrice primaryImage images category',
-  },
-  { path: 'quotationId', select: 'quotationNumber status' },
-];
+const StoreSetting = require('../models/StoreSetting');
+const HomepageSetting = require('../models/HomepageSetting');
 
-const buildAdminOrderResponse = (order) => {
-  const plain = typeof order?.toObject === 'function'
-    ? order.toObject()
-    : { ...order };
+const {
+  normalizeGoogleDriveUrl,
+  getGoogleDriveFileId,
+  buildPublicDriveImageUrl,
+} = require('../utils/googleDriveStorage');
 
-  const items = (plain.items || []).map((item) => {
-    const product = typeof item.product === 'object' && item.product ? item.product : {};
-    const primaryImage = product && product.primaryImage
-      ? product.primaryImage
-      : (product && product.images && product.images[0]
-        ? (typeof product.images[0] === 'string' ? product.images[0] : product.images[0].url || product.images[0])
-        : '');
-    const images = product && Array.isArray(product.images)
-      ? product.images.map((img) => (typeof img === 'string' ? img : (img.url || img)))
-      : [];
+// =========================================================
+// CURRENCY
+// =========================================================
+
+const formatCurrency = (amount, currency = 'INR') => {
+  const num = Number(amount) || 0;
+
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(num);
+};
+
+// =========================================================
+// LINE TOTAL
+// =========================================================
+
+const getLineTotal = (item) => {
+  const qty = Number(item.quantity) || 0;
+  const price = Number(item.price) || 0;
+  const lineTotal = Number(item.lineTotal);
+
+  if (Number.isFinite(lineTotal)) {
+    return lineTotal;
+  }
+
+  return price * qty;
+};
+
+// =========================================================
+// SUBTOTAL
+// =========================================================
+
+const computeSubtotal = (items) => {
+  return items.reduce((sum, item) => sum + getLineTotal(item), 0);
+};
+
+// =========================================================
+// FETCH IMAGE
+// =========================================================
+
+const fetchImageBuffer = (url, timeout = 5000) => {
+  return new Promise((resolve) => {
+    if (
+      !url ||
+      typeof url !== 'string' ||
+      !/^https?:\/\//i.test(url)
+    ) {
+      return resolve(null);
+    }
+
+    const lib = url.startsWith('https') ? https : http;
+
+    const req = lib.get(url, (res) => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
+        res.resume();
+
+        return resolve(
+          fetchImageBuffer(res.headers.location, timeout)
+        );
+      }
+
+      if (res.statusCode !== 200) {
+        res.resume();
+        return resolve(null);
+      }
+
+      const data = [];
+
+      res.on('data', (chunk) => {
+        data.push(chunk);
+      });
+
+      res.on('end', () => {
+        resolve(Buffer.concat(data));
+      });
+    });
+
+    req.on('error', () => {
+      resolve(null);
+    });
+
+    req.setTimeout(timeout, () => {
+      req.destroy();
+      resolve(null);
+    });
+  });
+};
+
+// =========================================================
+// RESOLVE LOGO URL
+// =========================================================
+
+const resolveLogoUrl = (logoUrl) => {
+  if (!logoUrl || typeof logoUrl !== 'string') {
+    return '';
+  }
+
+  const trimmed = logoUrl.trim();
+
+  if (!trimmed) {
+    return '';
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    const fileId = getGoogleDriveFileId(trimmed);
+
+    if (fileId) {
+      return buildPublicDriveImageUrl(fileId);
+    }
+
+    return normalizeGoogleDriveUrl(trimmed);
+  }
+
+  if (trimmed.startsWith('/')) {
+    return trimmed;
+  }
+
+  return trimmed;
+};
+
+// =========================================================
+// RENDER INVOICE
+// =========================================================
+
+const renderInvoice = (doc, data) => {
+  // -------------------------------------------------------
+  // PAGE SETTINGS
+  // -------------------------------------------------------
+
+  const pageWidth = 595;
+  const pageHeight = 842;
+
+  const leftMargin = 50;
+  const rightMargin = 50;
+
+  const contentWidth =
+    pageWidth - leftMargin - rightMargin;
+
+  let y = 50;
+
+  // -------------------------------------------------------
+  // HEADER
+  // -------------------------------------------------------
+
+  const logoX = leftMargin;
+  const logoY = y;
+
+  const nameX = data.storeLogo
+    ? leftMargin + 75
+    : leftMargin;
+
+  // Store name
+  doc
+    .fontSize(20)
+    .font('Helvetica-Bold')
+    .text(
+      data.storeName,
+      nameX,
+      y
+    );
+
+  // Store contact
+  doc
+    .fontSize(10)
+    .font('Helvetica')
+    .text(
+      data.storeEmail,
+      nameX,
+      y + 16
+    )
+    .text(
+      data.storePhone,
+      nameX,
+      y + 30
+    );
+
+  // -------------------------------------------------------
+  // INVOICE INFORMATION
+  // -------------------------------------------------------
+
+  const invoiceInfoWidth = 155;
+
+  const invoiceInfoX =
+    pageWidth -
+    rightMargin -
+    invoiceInfoWidth;
+
+  doc
+    .fontSize(14)
+    .font('Helvetica-Bold')
+    .text(
+      'INVOICE',
+      invoiceInfoX,
+      y,
+      {
+        width: invoiceInfoWidth,
+        align: 'right',
+      }
+    );
+
+  doc
+    .fontSize(10)
+    .font('Helvetica')
+    .text(
+      `Invoice #: ${data.invoiceNumber}`,
+      invoiceInfoX,
+      y + 16,
+      {
+        width: invoiceInfoWidth,
+        align: 'right',
+      }
+    )
+    .text(
+      `Order #: ${data.orderNumber}`,
+      invoiceInfoX,
+      y + 30,
+      {
+        width: invoiceInfoWidth,
+        align: 'right',
+      }
+    )
+    .text(
+      `Invoice Date: ${new Date(
+        data.invoiceDate
+      ).toLocaleDateString('en-IN')}`,
+      invoiceInfoX,
+      y + 44,
+      {
+        width: invoiceInfoWidth,
+        align: 'right',
+      }
+    )
+    .text(
+      `Order Date: ${new Date(
+        data.orderDate
+      ).toLocaleDateString('en-IN')}`,
+      invoiceInfoX,
+      y + 58,
+      {
+        width: invoiceInfoWidth,
+        align: 'right',
+      }
+    );
+
+  // -------------------------------------------------------
+  // LOGO
+  // -------------------------------------------------------
+
+  y = 145;
+
+  if (data.logoBuffer) {
+    try {
+      doc.image(
+        data.logoBuffer,
+        logoX,
+        logoY,
+        {
+          width: 60,
+          height: 40,
+          valign: 'top',
+        }
+      );
+
+      y = Math.max(
+        y,
+        logoY + 45
+      );
+    } catch (error) {
+      y = 145;
+    }
+  }
+
+  // -------------------------------------------------------
+  // BILL TO
+  // -------------------------------------------------------
+
+  doc
+    .fontSize(11)
+    .font('Helvetica-Bold')
+    .text(
+      'Bill To:',
+      leftMargin,
+      y
+    );
+
+  doc
+    .fontSize(10)
+    .font('Helvetica')
+    .text(
+      data.customerName,
+      leftMargin,
+      y + 14
+    )
+    .text(
+      data.billingAddress,
+      leftMargin,
+      y + 26,
+      {
+        width: 280,
+      }
+    );
+
+  let shipY = y + 44;
+
+  // Phone
+  doc
+    .fontSize(10)
+    .font('Helvetica')
+    .text(
+      `Phone: ${data.phone}`,
+      leftMargin,
+      shipY
+    );
+
+  // Email
+  doc.text(
+    `Email: ${data.customerEmail || 'N/A'}`,
+    leftMargin,
+    shipY + 14
+  );
+
+  y = shipY + 34;
+
+  // -------------------------------------------------------
+  // SHIP TO
+  // -------------------------------------------------------
+
+  if (
+    data.shippingAddress &&
+    data.shippingAddress !== data.billingAddress
+  ) {
+    doc
+      .fontSize(11)
+      .font('Helvetica-Bold')
+      .text(
+        'Ship To:',
+        leftMargin,
+        y
+      );
+
+    doc
+      .fontSize(10)
+      .font('Helvetica')
+      .text(
+        data.customerName,
+        leftMargin,
+        y + 14
+      )
+      .text(
+        data.shippingAddress,
+        leftMargin,
+        y + 26,
+        {
+          width: 280,
+        }
+      );
+
+    y += 44;
+
+    doc
+      .fontSize(10)
+      .font('Helvetica')
+      .text(
+        `Phone: ${data.phone}`,
+        leftMargin,
+        y
+      )
+      .text(
+        `Email: ${data.customerEmail || 'N/A'}`,
+        leftMargin,
+        y + 14
+      );
+
+    y += 34;
+  }
+
+  y += 15;
+
+  // -------------------------------------------------------
+  // PRODUCT TABLE
+  // -------------------------------------------------------
+
+  const tableTop = y;
+
+  const headers = [
+    'Product',
+    'SKU',
+    'Qty',
+    'Unit Price',
+    'Discount',
+    'GST',
+    'Total',
+  ];
+
+  /*
+   * Column widths:
+   *
+   * Product   140
+   * SKU        48
+   * Qty        28
+   * Unit       70
+   * Discount   52
+   * GST        48
+   * Total      55
+   *
+   * Column total = 441
+   * 6 gaps × 5 = 30
+   * Overall = 471
+   *
+   * Content width = 495
+   *
+   * Therefore everything fits safely.
+   */
+
+  const colWidths = [
+    140,
+    48,
+    28,
+    70,
+    52,
+    48,
+    55,
+  ];
+
+  const colGap = 5;
+
+  // -------------------------------------------------------
+  // TABLE HEADER
+  // -------------------------------------------------------
+
+  doc
+    .fontSize(9)
+    .font('Helvetica-Bold');
+
+  let x = leftMargin;
+
+  headers.forEach((header, index) => {
+    doc.text(
+      header,
+      x,
+      tableTop,
+      {
+        width: colWidths[index],
+        align:
+          index === 0
+            ? 'left'
+            : 'right',
+      }
+    );
+
+    x +=
+      colWidths[index] +
+      colGap;
+  });
+
+  y = tableTop + 17;
+
+  // -------------------------------------------------------
+  // TABLE ROWS
+  // -------------------------------------------------------
+
+  doc
+    .fontSize(8)
+    .font('Helvetica');
+
+  data.items.forEach((item) => {
+    const row = [
+      item.name || 'Product',
+
+      item.sku || '-',
+
+      String(
+        item.quantity || 0
+      ),
+
+      formatCurrency(
+        item.unitPrice,
+        data.currency
+      ),
+
+      `${Number(
+        item.discountPercent || 0
+      )}%`,
+
+      `${Number(
+        item.gstPercent || 0
+      )}%`,
+
+      formatCurrency(
+        getLineTotal(item),
+        data.currency
+      ),
+    ];
+
+    // -----------------------------------------------------
+    // PRODUCT NAME WRAPPING CALCULATION
+    // -----------------------------------------------------
+
+    const productName =
+      String(row[0] || '');
+
+    const productNameWidth =
+      colWidths[0];
+
+    const charPerLine =
+      Math.max(
+        1,
+        Math.floor(
+          productNameWidth / 6.5
+        )
+      );
+
+    const maxRows =
+      Math.max(
+        1,
+        Math.ceil(
+          productName.length /
+            charPerLine
+        )
+      );
+
+    // -----------------------------------------------------
+    // DRAW CELLS
+    // -----------------------------------------------------
+
+    let cellX = leftMargin;
+
+    row.forEach((cell, index) => {
+      doc.text(
+        String(cell),
+        cellX,
+        y,
+        {
+          width:
+            colWidths[index],
+          align:
+            index === 0
+              ? 'left'
+              : 'right',
+          lineBreak: false,
+        }
+      );
+
+      cellX +=
+        colWidths[index] +
+        colGap;
+    });
+
+    y += Math.max(
+      16,
+      16 * maxRows
+    );
+  });
+
+  // -------------------------------------------------------
+  // TABLE DIVIDER
+  // -------------------------------------------------------
+
+  y += 8;
+
+  doc
+    .moveTo(
+      leftMargin,
+      y
+    )
+    .lineTo(
+      leftMargin +
+        contentWidth,
+      y
+    )
+    .stroke();
+
+  y += 15;
+
+  // =======================================================
+  // TOTALS SECTION
+  // =======================================================
+
+  /*
+   * IMPORTANT:
+   *
+   * The old code calculated:
+   *
+   * rightEdge = pageWidth - rightColX
+   *
+   * which resulted in only 155 points of width.
+   *
+   * That caused the totals to overlap.
+   *
+   * We now use a fixed 220-point totals area with
+   * separate label and value columns.
+   */
+
+  const totalsWidth = 220;
+
+  const totalsX =
+    pageWidth -
+    rightMargin -
+    totalsWidth;
+
+  const labelWidth = 130;
+  const valueWidth = 90;
+
+  const labelX = totalsX;
+  const valueX =
+    totalsX + labelWidth;
+
+  doc
+    .fontSize(10)
+    .font('Helvetica');
+
+  // -------------------------------------------------------
+  // SUMMARY LINE
+  // -------------------------------------------------------
+
+  const addSummaryLine = (
+    label,
+    value
+  ) => {
+    // Label column
+    doc.text(
+      label,
+      labelX,
+      y,
+      {
+        width: labelWidth,
+        align: 'right',
+      }
+    );
+
+    // Amount column
+    doc.text(
+      formatCurrency(
+        value,
+        data.currency
+      ),
+      valueX,
+      y,
+      {
+        width: valueWidth,
+        align: 'right',
+      }
+    );
+
+    y += 18;
+  };
+
+  // Subtotal
+  addSummaryLine(
+    'Subtotal:',
+    data.subtotal
+  );
+
+  // Discount
+  if (
+    Number(
+      data.totalDiscount
+    ) !== 0
+  ) {
+    addSummaryLine(
+      'Discount:',
+      -Number(
+        data.totalDiscount
+      )
+    );
+  }
+
+  // GST
+  addSummaryLine(
+    'GST:',
+    data.totalGst
+  );
+
+  // Shipping
+  addSummaryLine(
+    'Shipping:',
+    data.shippingCharges
+  );
+
+  // -------------------------------------------------------
+  // GRAND TOTAL DIVIDER
+  // -------------------------------------------------------
+
+  y += 4;
+
+  doc
+    .moveTo(
+      totalsX,
+      y
+    )
+    .lineTo(
+      totalsX +
+        totalsWidth,
+      y
+    )
+    .stroke();
+
+  y += 12;
+
+  // -------------------------------------------------------
+  // GRAND TOTAL
+  // -------------------------------------------------------
+
+  doc
+    .fontSize(12)
+    .font('Helvetica-Bold');
+
+  doc.text(
+    'Grand Total:',
+    labelX,
+    y,
+    {
+      width: labelWidth,
+      align: 'right',
+    }
+  );
+
+  doc.text(
+    formatCurrency(
+      data.grandTotal,
+      data.currency
+    ),
+    valueX,
+    y,
+    {
+      width: valueWidth,
+      align: 'right',
+    }
+  );
+
+  // =======================================================
+  // PAYMENT / STATUS
+  // =======================================================
+
+  y += 28;
+
+  doc
+    .fontSize(9)
+    .font('Helvetica');
+
+  const paymentText =
+    `Payment Method: ${String(
+      data.paymentMethod || 'cod'
+    ).toUpperCase()}`;
+
+  const paymentStatusText =
+    `Payment Status: ${
+      data.paymentStatus ||
+      'pending'
+    }`;
+
+  const orderStatusText =
+    `Order Status: ${
+      data.orderStatus ||
+      'new'
+    }`;
+
+  doc.text(
+    paymentText,
+    leftMargin,
+    y,
+    {
+      width: 150,
+      align: 'left',
+    }
+  );
+
+  doc.text(
+    paymentStatusText,
+    leftMargin + 165,
+    y,
+    {
+      width: 150,
+      align: 'left',
+    }
+  );
+
+  doc.text(
+    orderStatusText,
+    leftMargin + 330,
+    y,
+    {
+      width: 115,
+      align: 'left',
+    }
+  );
+
+  // -------------------------------------------------------
+  // TRACKING NUMBER
+  // -------------------------------------------------------
+
+  if (data.trackingNumber) {
+    y += 18;
+
+    doc.text(
+      `Tracking No: ${data.trackingNumber}`,
+      leftMargin,
+      y,
+      {
+        width: contentWidth,
+        align: 'left',
+      }
+    );
+  }
+
+  // =======================================================
+  // FOOTER
+  // =======================================================
+
+  y += 28;
+
+  doc
+    .fontSize(8)
+    .font('Helvetica')
+    .text(
+      'Thank you for your order!',
+      0,
+      y,
+      {
+        width: pageWidth,
+        align: 'center',
+      }
+    )
+    .text(
+      'This is a computer-generated invoice.',
+      0,
+      y + 14,
+      {
+        width: pageWidth,
+        align: 'center',
+      }
+    );
+
+  // Finish PDF
+  doc.end();
+};
+
+// =========================================================
+// BUILD INVOICE DATA
+// =========================================================
+
+const buildInvoiceData = async (order) => {
+  const [
+    storeSettings,
+    homepageSettings,
+  ] = await Promise.all([
+    StoreSetting.getSettings(),
+    HomepageSetting.getSettings(),
+  ]);
+
+  const plainOrder =
+    typeof order?.toObject === 'function'
+      ? order.toObject()
+      : { ...order };
+
+  const currency =
+    storeSettings.currency ||
+    'INR';
+
+  const logoUrl =
+    resolveLogoUrl(
+      homepageSettings.footerLogoUrl
+    );
+
+  let logoBuffer = null;
+
+  if (
+    logoUrl &&
+    /^https?:\/\//i.test(logoUrl)
+  ) {
+    logoBuffer =
+      await fetchImageBuffer(
+        logoUrl
+      );
+  }
+
+  // -------------------------------------------------------
+  // ITEMS
+  // -------------------------------------------------------
+
+  const items = (
+    plainOrder.items || []
+  ).map((item) => {
+    const qty =
+      Number(item.quantity) || 0;
+
+    const price =
+      Number(item.price) || 0;
+
+    const discountPercent =
+      Number(item.discount) || 0;
+
+    const gstPercent =
+      Number(item.gst) || 0;
+
+    const gross =
+      price * qty;
+
+    const discountAmount =
+      gross *
+      (discountPercent / 100);
+
+    const taxableValue =
+      Math.max(
+        0,
+        gross -
+          discountAmount
+      );
+
+    const gstAmount =
+      taxableValue *
+      (gstPercent / 100);
+
+    const lineTotal =
+      Number.isFinite(
+        Number(item.lineTotal)
+      )
+        ? Number(item.lineTotal)
+        : taxableValue +
+          gstAmount;
+
+    const product =
+      typeof item.product ===
+        'object' &&
+      item.product
+        ? item.product
+        : {};
 
     return {
-      product: item.product,
-      name: item.name || (product && product.name) || '',
-      image: item.image || primaryImage || '',
-      images,
-      sku: item.sku || (product && product.sku) || '',
-      price: Number(item.price) || 0,
-      quantity: Number(item.quantity) || 0,
-      discount: Number(item.discount) || 0,
-      gst: Number(item.gst) || 18,
-      lineTotal: Number(item.lineTotal) || 0,
+      name:
+        item.name ||
+        product.name ||
+        'Product',
+
+      sku:
+        item.sku ||
+        product.sku ||
+        '',
+
+      image:
+        item.image ||
+        product.primaryImage ||
+        '',
+
+      quantity: qty,
+
+      unitPrice: price,
+
+      discountPercent,
+
+      discountAmount,
+
+      taxableValue,
+
+      gstPercent,
+
+      gstAmount,
+
+      lineTotal,
     };
   });
 
-  const userObj = plain.user && typeof plain.user === 'object'
-    ? {
-        _id: plain.user._id,
-        name: plain.user.name || '',
-        email: plain.user.email || '',
-        phone: plain.user.phone || '',
-      }
-    : plain.user;
+  // -------------------------------------------------------
+  // TOTALS
+  // -------------------------------------------------------
+
+  const subtotal =
+    items.reduce(
+      (sum, item) =>
+        sum + item.gross,
+      0
+    );
+
+  const totalDiscount =
+    items.reduce(
+      (sum, item) =>
+        sum +
+        item.discountAmount,
+      0
+    );
+
+  const totalGst =
+    items.reduce(
+      (sum, item) =>
+        sum + item.gstAmount,
+      0
+    );
+
+  const shippingCharges =
+    Number(
+      plainOrder.shippingPrice
+    ) || 0;
+
+  const grandTotal =
+    Number(
+      plainOrder.totalPrice
+    ) || 0;
+
+  // -------------------------------------------------------
+  // CUSTOMER
+  // -------------------------------------------------------
+
+  const billing =
+    plainOrder.billingAddress ||
+    plainOrder.shippingAddress ||
+    {};
+
+  const shipping =
+    plainOrder.shippingAddress ||
+    {};
+
+  const customer =
+    typeof plainOrder.user ===
+      'object' &&
+    plainOrder.user
+      ? plainOrder.user
+      : {};
+
+  // -------------------------------------------------------
+  // RETURN DATA
+  // -------------------------------------------------------
 
   return {
-    _id: plain._id,
-    orderNumber: plain.orderNumber || '',
-    invoiceNumber: plain.invoiceNumber || '',
-    user: userObj,
+    // Store
+    storeName:
+      storeSettings.storeName ||
+      'Jewellery Shop',
+
+    storeEmail:
+      storeSettings.email ||
+      '',
+
+    storePhone:
+      storeSettings.phone ||
+      '',
+
+    storeLogo:
+      logoUrl || '',
+
+    logoBuffer,
+
+    currency,
+
+    // Invoice
+    invoiceNumber:
+      plainOrder.invoiceNumber ||
+      '',
+
+    orderNumber:
+      plainOrder.orderNumber ||
+      '',
+
+    invoiceDate:
+      plainOrder.updatedAt ||
+      plainOrder.createdAt ||
+      new Date(),
+
+    orderDate:
+      plainOrder.createdAt ||
+      new Date(),
+
+    // Customer
+    customerName:
+      billing.fullName ||
+      customer.name ||
+      '',
+
+    customerEmail:
+      customer.email ||
+      '',
+
+    billingAddress:
+      `${billing.address || ''}${
+        billing.landmark
+          ? ', ' +
+            billing.landmark
+          : ''
+      }, ${
+        billing.city || ''
+      }, ${
+        billing.state || ''
+      } ${
+        billing.pincode || ''
+      }`
+        .trim()
+        .replace(
+          /^,\s*/,
+          ''
+        ),
+
+    shippingAddress:
+      `${shipping.address || ''}${
+        shipping.landmark
+          ? ', ' +
+            shipping.landmark
+          : ''
+      }, ${
+        shipping.city || ''
+      }, ${
+        shipping.state || ''
+      } ${
+        shipping.pincode || ''
+      }`
+        .trim()
+        .replace(
+          /^,\s*/,
+          ''
+        ),
+
+    phone:
+      shipping.phone ||
+      billing.phone ||
+      '',
+
+    // Items
     items,
-    itemCount: items.length,
-    totalQuantity: items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
-    shippingAddress: plain.shippingAddress,
-    billingAddress: plain.billingAddress || plain.shippingAddress,
-    paymentMethod: plain.paymentMethod || 'cod',
-    itemsPrice: Number(plain.itemsPrice) || 0,
-    taxPrice: Number(plain.taxPrice) || 0,
-    shippingPrice: Number(plain.shippingPrice) || 0,
-    discount: Number(plain.discount) || 0,
-    totalPrice: Number(plain.totalPrice) || 0,
-    isPaid: plain.isPaid || false,
-    paidAt: plain.paidAt,
-    isDelivered: plain.isDelivered || false,
-    deliveredAt: plain.deliveredAt,
-    status: plain.status || 'new',
-    paymentStatus: plain.paymentStatus || 'pending',
-    shippingStatus: plain.shippingStatus || 'not_shipped',
-    trackingNumber: plain.trackingNumber || '',
-    courier: plain.courier || '',
-    shippedAt: plain.shippedAt,
-    estimatedDeliveryDate: plain.estimatedDeliveryDate,
-    statusHistory: plain.statusHistory || [],
-    paymentGateway: plain.paymentGateway,
-    paymentGatewayOrderId: plain.paymentGatewayOrderId || '',
-    createdAt: plain.createdAt,
-    updatedAt: plain.updatedAt,
+
+    // Totals
+    subtotal,
+
+    totalDiscount,
+
+    totalGst,
+
+    shippingCharges,
+
+    grandTotal,
+
+    // Status
+    paymentMethod:
+      plainOrder.paymentMethod ||
+      'cod',
+
+    paymentStatus:
+      plainOrder.paymentStatus ||
+      'pending',
+
+    orderStatus:
+      plainOrder.status ||
+      'new',
+
+    trackingNumber:
+      plainOrder.trackingNumber ||
+      '',
   };
 };
 
-exports.adminGetOrders = asyncHandler(async (req, res) => {
-  const {
-    search,
-    status,
-    paymentStatus,
-    shippingStatus,
-    dateRange,
-    startDate,
-    endDate,
-    sortBy = '-createdAt',
-    page = 1,
-    limit = 20,
-  } = req.query;
+// =========================================================
+// GENERATE INVOICE PDF
+// =========================================================
 
-  const query = {};
+const generateInvoicePDF = async (
+  order
+) => {
+  const data =
+    await buildInvoiceData(
+      order
+    );
 
-  if (search && String(search).trim()) {
-    const searchRegex = { $regex: search, $options: 'i' };
-    query.$or = [
-      { orderNumber: searchRegex },
-      { invoiceNumber: searchRegex },
-      { trackingNumber: searchRegex },
-      { 'shippingAddress.fullName': searchRegex },
-      { 'billingAddress.fullName': searchRegex },
-      { 'shippingAddress.phone': searchRegex },
-      { 'billingAddress.phone': searchRegex },
-    ];
+  return new Promise(
+    (resolve, reject) => {
+      const doc =
+        new PDFDocument({
+          margin: 50,
+          size: 'A4',
+        });
 
-    const searchObjectId = mongoose.Types.ObjectId.isValid(search)
-      ? new mongoose.Types.ObjectId(search)
-      : null;
+      const chunks = [];
 
-    if (searchObjectId) {
-      query.$or.push(
-        { _id: searchObjectId },
-        { user: searchObjectId }
+      doc.on(
+        'data',
+        (chunk) => {
+          chunks.push(chunk);
+        }
+      );
+
+      doc.on(
+        'end',
+        () => {
+          resolve(
+            Buffer.concat(chunks)
+          );
+        }
+      );
+
+      doc.on(
+        'error',
+        reject
+      );
+
+      renderInvoice(
+        doc,
+        data
       );
     }
-  }
+  );
+};
 
-  if (status) {
-    const statusList = Array.isArray(status)
-      ? status
-      : String(status).split(',').map((s) => s.trim()).filter(Boolean);
-    const validStatuses = statusList.filter((s) => Order.VALID_STATUSES.includes(s));
-    if (validStatuses.length > 0) {
-      query.status = { $in: validStatuses };
-    }
-  }
+// =========================================================
+// STREAM INVOICE TO RESPONSE
+// =========================================================
 
-  if (paymentStatus) {
-    const psList = Array.isArray(paymentStatus)
-      ? paymentStatus
-      : String(paymentStatus).split(',').map((s) => s.trim()).filter(Boolean);
-    const validPs = psList.filter((p) => Order.VALID_PAYMENT_STATUSES.includes(p));
-    if (validPs.length > 0) {
-      query.paymentStatus = { $in: validPs };
-    }
-  }
+const streamInvoiceToResponse =
+  async (
+    order,
+    res
+  ) => {
+    const data =
+      await buildInvoiceData(
+        order
+      );
 
-  if (shippingStatus) {
-    const ssList = Array.isArray(shippingStatus)
-      ? shippingStatus
-      : String(shippingStatus).split(',').map((s) => s.trim()).filter(Boolean);
-    const validSs = ssList.filter((s) => Order.VALID_SHIPPING_STATUSES.includes(s));
-    if (validSs.length > 0) {
-      query.shippingStatus = { $in: validSs };
-    }
-  }
+    res.setHeader(
+      'Content-Type',
+      'application/pdf'
+    );
 
-  if (startDate || endDate) {
-    query.createdAt = {};
-    if (startDate) {
-      query.createdAt.$gte = new Date(startDate);
-    }
-    if (endDate) {
-      query.createdAt.$lte = new Date(endDate);
-    }
-  }
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="invoice-${
+        data.invoiceNumber ||
+        data.orderNumber ||
+        'order'
+      }.pdf"`
+    );
 
-  const validSortFields = [
-    '-createdAt', 'createdAt', '-updatedAt', 'updatedAt',
-    'status', '-status', 'totalPrice', '-totalPrice',
-    'orderNumber', '-orderNumber',
-  ];
-  const sortOption = validSortFields.includes(sortBy) ? sortBy : '-createdAt';
+    res.setHeader(
+      'Content-Transfer-Encoding',
+      'binary'
+    );
 
-  const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
-  const skip = (pageNum - 1) * limitNum;
+    const doc =
+      new PDFDocument({
+        margin: 50,
+        size: 'A4',
+      });
 
-  const [orders, total] = await Promise.all([
-    Order.find(query)
-      .populate(ORDER_POPULATE)
-      .sort(sortOption)
-      .skip(skip)
-      .limit(limitNum),
-    Order.countDocuments(query),
-  ]);
+    doc.on(
+      'data',
+      (chunk) => {
+        if (!res.write(chunk)) {
+          doc.pause();
 
-  res.status(200).json({
-    success: true,
-    count: orders.length,
-    total,
-    page: pageNum,
-    pages: Math.ceil(total / limitNum),
-    hasMore: pageNum < Math.ceil(total / limitNum),
-    data: orders.map(buildAdminOrderResponse),
-  });
-});
+          res.once(
+            'drain',
+            () => {
+              doc.resume();
+            }
+          );
+        }
+      }
+    );
 
-exports.adminGetOrder = asyncHandler(async (req, res) => {
-  const orderId = req.params.id;
+    doc.on(
+      'end',
+      () => {
+        res.end();
+      }
+    );
 
-  if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid order ID',
-    });
-  }
+    doc.on(
+      'error',
+      (err) => {
+        console.error(
+          'Invoice PDF generation error:',
+          err
+        );
 
-  const order = await Order.findById(orderId).populate(ORDER_POPULATE);
+        if (
+          !res.headersSent
+        ) {
+          res
+            .status(500)
+            .json({
+              success: false,
+              message:
+                'Failed to generate invoice',
+            });
+        } else {
+          res.end();
+        }
+      }
+    );
 
-  if (!order) {
-    return res.status(404).json({
-      success: false,
-      message: 'Order not found',
-    });
-  }
+    renderInvoice(
+      doc,
+      data
+    );
+  };
 
-  res.status(200).json({
-    success: true,
-    data: buildAdminOrderResponse(order),
-  });
-});
+// =========================================================
+// EXPORTS
+// =========================================================
 
-exports.adminUpdateOrderStatus = asyncHandler(async (req, res) => {
-  const orderId = req.params.id;
-  const { status, note, trackingNumber, courier, estimatedDeliveryDate, shippingStatus } = req.body;
-
-  if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid order ID',
-    });
-  }
-
-  const order = await Order.findById(orderId).populate(ORDER_POPULATE);
-
-  if (!order) {
-    return res.status(404).json({
-      success: false,
-      message: 'Order not found',
-    });
-  }
-
-  if (status && !Order.VALID_STATUSES.includes(status)) {
-    return res.status(400).json({
-      success: false,
-      message: `Invalid status. Valid values: ${Order.VALID_STATUSES.join(', ')}`,
-    });
-  }
-
-  if (shippingStatus && !Order.VALID_SHIPPING_STATUSES.includes(shippingStatus)) {
-    return res.status(400).json({
-      success: false,
-      message: `Invalid shipping status. Valid values: ${Order.VALID_SHIPPING_STATUSES.join(', ')}`,
-    });
-  }
-
-  if (status) {
-    order.status = status;
-    order.statusHistory = order.statusHistory || [];
-    order.statusHistory.push({
-      status,
-      timestamp: new Date(),
-      note: note || '',
-      updatedBy: req.user._id,
-    });
-
-    if (status === 'shipped') {
-      order.shippingStatus = 'shipped';
-      order.shippedAt = new Date();
-    } else if (status === 'delivered') {
-      order.shippingStatus = 'delivered';
-      order.deliveredAt = new Date();
-      order.isDelivered = true;
-    } else if (status === 'cancelled') {
-      order.shippingStatus = 'not_shipped';
-    }
-  }
-
-  if (trackingNumber !== undefined && trackingNumber !== null) {
-    order.trackingNumber = trackingNumber;
-  }
-
-  if (courier !== undefined && courier !== null) {
-    order.courier = courier;
-  }
-
-  if (estimatedDeliveryDate !== undefined && estimatedDeliveryDate !== null) {
-    order.estimatedDeliveryDate = new Date(estimatedDeliveryDate);
-  }
-
-  if (shippingStatus) {
-    order.shippingStatus = shippingStatus;
-  }
-
-  await order.save();
-
-  if (status) {
-    sendOrderStatusNotificationEmail(order, status).catch((err) => {
-      console.error('[adminOrderController] Failed to send status notification email:', err.message);
-    });
-  }
-
-  res.status(200).json({
-    success: true,
-    message: 'Order updated successfully',
-    data: buildAdminOrderResponse(order),
-  });
-});
-
-exports.adminDownloadInvoice = asyncHandler(async (req, res) => {
-  const orderId = req.params.id;
-
-  if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid order ID',
-    });
-  }
-
-  const order = await Order.findById(orderId).populate(ORDER_POPULATE);
-
-  if (!order) {
-    return res.status(404).json({
-      success: false,
-      message: 'Order not found',
-    });
-  }
-
-  await streamInvoiceToResponse(order, res);
-});
-
-exports.adminDeleteOrder = asyncHandler(async (req, res) => {
-  const orderId = req.params.id;
-
-  if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid order ID',
-    });
-  }
-
-  const order = await Order.findById(orderId);
-
-  if (!order) {
-    return res.status(404).json({
-      success: false,
-      message: 'Order not found',
-    });
-  }
-
-  const canDelete = ['new', 'cancelled'].includes(order.status);
-  if (!canDelete) {
-    return res.status(400).json({
-      success: false,
-      message: `Order cannot be deleted in "${order.status}" status. Only orders with "new" or "cancelled" status can be deleted.`,
-    });
-  }
-
-  await order.deleteOne();
-
-  res.status(200).json({
-    success: true,
-    message: 'Order deleted successfully',
-  });
-});
+module.exports = {
+  generateInvoicePDF,
+  streamInvoiceToResponse,
+  buildInvoiceData,
+  resolveLogoUrl,
+  fetchImageBuffer,
+  formatCurrency,
+  getLineTotal,
+};
