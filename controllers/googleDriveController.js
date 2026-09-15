@@ -193,15 +193,39 @@ const handleGoogleDriveCallback = asyncHandler(async (req, res) => {
     googleDrive: 'connected',
   });
 });
-
 const getGoogleDriveStatus = asyncHandler(async (req, res) => {
   const connection = await GoogleDriveConnection.findOne({ user: req.user._id });
 
+  if (!connection) {
+    return res.status(200).json({
+      success: true,
+      connected: false,
+      email: null,
+      connectedAt: null,
+    });
+  }
+
+  let connected = false;
+
+  try {
+    const refreshToken = connection.refreshTokenEncrypted
+      ? decryptValue(connection.refreshTokenEncrypted)
+      : '';
+
+    const accessToken = connection.accessTokenEncrypted
+      ? decryptValue(connection.accessTokenEncrypted)
+      : '';
+
+    connected = Boolean(refreshToken || accessToken);
+  } catch (error) {
+    connected = false;
+  }
+
   return res.status(200).json({
     success: true,
-    connected: Boolean(connection),
-    email: connection?.email || null,
-    connectedAt: connection?.connectedAt || null,
+    connected,
+    email: connected ? connection.email || null : null,
+    connectedAt: connected ? connection.connectedAt || null : null,
   });
 });
 
