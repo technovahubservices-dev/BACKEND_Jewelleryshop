@@ -1114,7 +1114,7 @@ exports.updateProduct = async (req, res) => {
       message: 'Failed to update product',
     });
   }
-};
+
 
 exports.deleteProduct = async (req, res) => {
   try {
