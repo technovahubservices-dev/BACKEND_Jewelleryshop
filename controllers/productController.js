@@ -103,7 +103,19 @@ const normalizeProductListing = (product) => {
   return plainProduct;
 };
 
-const generateSKU = (name, category, metal) => {
+// ---------------------------------------------------------
+// SKU GENERATION
+// ---------------------------------------------------------
+// Automatic SKU format:
+// GOLD-RNG-001
+// GOLD-RNG-002
+// SILV-ERG-001
+//
+// Manual SKU entered by admin is kept as-is after trimming.
+// SKU uniqueness is enforced by MongoDB unique index.
+// ---------------------------------------------------------
+
+const generateSKU = (category, metal) => {
   const metalMap = {
     Gold: 'GOLD',
     Silver: 'SILV',
@@ -122,22 +134,36 @@ const generateSKU = (name, category, metal) => {
     Sets: 'SET',
   };
 
-  const metalCode = metalMap[metal] || 'GOLD';
-  const categoryCode = categoryMap[category] || 'PRD';
+  const metalCode = metalMap[String(metal || '').trim()] || 'GOLD';
+  const categoryCode =
+    categoryMap[String(category || '').trim()] || 'PRD';
 
   return `${metalCode}-${categoryCode}`;
 };
 
-const getNextSkuNumber = async (skuPrefix) => {
-  for (let num = 1; num <= 999; num++) {
-    const sku = `${skuPrefix}-${String(num).padStart(3, '0')}`;
+const getNextSku = async (skuPrefix) => {
+  const products = await Product.find({
+    sku: {
+      $regex: `^${skuPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-\\d{3}$`,
+      $options: 'i',
+    },
+  })
+    .select('sku')
+    .lean();
 
-    const existingProduct = await Product.findOne({
-      sku,
-    }).select('_id').lean();
+  const usedNumbers = new Set();
 
-    if (!existingProduct) {
-      return String(num).padStart(3, '0');
+  for (const product of products) {
+    const match = String(product.sku || '').match(/-(\d{3})$/);
+
+    if (match) {
+      usedNumbers.add(Number(match[1]));
+    }
+  }
+
+  for (let number = 1; number <= 999; number++) {
+    if (!usedNumbers.has(number)) {
+      return `${skuPrefix}-${String(number).padStart(3, '0')}`;
     }
   }
 
@@ -324,32 +350,21 @@ exports.createProduct = async (req, res) => {
       });
     }
 
-    if (!sku) {
-      const skuPrefix = generateSKU(name, category, metal);
-      let skuCreated = false;
+    // ---------------------------------------------------------
+// AUTOMATIC SKU
+// ---------------------------------------------------------
+// If admin leaves SKU empty, generate it automatically.
+// If admin entered SKU, keep the manual SKU.
+// ---------------------------------------------------------
 
-      for (let attempt = 0; attempt < 20; attempt++) {
-        const skuNum = await getNextSkuNumber(skuPrefix);
-        const candidateSku = `${skuPrefix}-${skuNum}`;
+if (!sku) {
+  const skuPrefix = generateSKU(category, metal);
+  sku = await getNextSku(skuPrefix);
 
-        const existingProduct = await Product.findOne({
-          sku: candidateSku,
-        }).select('_id').lean();
-
-        if (!existingProduct) {
-          sku = candidateSku;
-          skuCreated = true;
-          break;
-        }
-      }
-
-      if (!skuCreated) {
-        return res.status(400).json({
-          success: false,
-          message: 'Could not generate a unique SKU. Please try again.',
-        });
-      }
-    }
+  console.log('[SKU] Automatically generated:', sku);
+} else {
+  console.log('[SKU] Manual SKU:', sku);
+}
 
     let parsedTags = tags;
     if (typeof tags === 'string') {
@@ -421,11 +436,33 @@ exports.createProduct = async (req, res) => {
       });
     }
     if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'A product with this SKU already exists',
-      });
-    }
+  const duplicateField = Object.keys(error.keyPattern || {})[0];
+
+  console.error('[Product Create] Duplicate key:', {
+    duplicateField,
+    keyPattern: error.keyPattern,
+    keyValue: error.keyValue,
+  });
+
+  if (duplicateField === 'sku') {
+    return res.status(400).json({
+      success: false,
+      message: `SKU "${error.keyValue?.sku || ''}" is already in use. Please enter a different SKU.`,
+    });
+  }
+
+  if (duplicateField === 'slug') {
+    return res.status(400).json({
+      success: false,
+      message: 'A duplicate product slug was detected. Please try again.',
+    });
+  }
+
+  return res.status(400).json({
+    success: false,
+    message: 'A duplicate product value already exists.',
+  });
+}
     if (error.statusCode) {
       return res.status(error.statusCode).json({
         success: false,
@@ -1043,11 +1080,28 @@ exports.updateProduct = async (req, res) => {
         message: messages.join(', '),
       });
     }
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'A product with this SKU already exists',
-      });
+   if (error.code === 11000) {
+  const duplicateField = Object.keys(error.keyPattern || {})[0];
+
+  if (duplicateField === 'sku') {
+    return res.status(400).json({
+      success: false,
+      message: `SKU "${error.keyValue?.sku || ''}" is already in use. Please enter a different SKU.`,
+    });
+  }
+
+  if (duplicateField === 'slug') {
+    return res.status(400).json({
+      success: false,
+      message: 'A product with this name already exists. Please use a different name.',
+    });
+  }
+
+  return res.status(400).json({
+    success: false,
+    message: 'A duplicate product value already exists.',
+  });
+}
     }
     if (error.statusCode) {
       return res.status(error.statusCode).json({

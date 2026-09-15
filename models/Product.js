@@ -209,37 +209,102 @@ productSchema.index({ occasion: 1 });
 productSchema.index({ price: 1 });
 productSchema.index({ discountPrice: 1 });
 
-productSchema.pre('save', function (next) {
-  if (!this.slug && this.name) {
-    this.slug = this.name
-      .toLowerCase()
-      .replace(/[^a-zA-Z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-  }
+productSchema.pre('save', async function (next) {
+  try {
+    // ---------------------------------------------------------
+    // UNIQUE SLUG GENERATION
+    // ---------------------------------------------------------
+    // Product names can be duplicated.
+    //
+    // Example:
+    // Gold Ring  -> gold-ring
+    // Gold Ring  -> gold-ring-2
+    // Gold Ring  -> gold-ring-3
+    //
+    // SKU is handled separately in productController.js.
+    // ---------------------------------------------------------
 
-  if (this.isModified('images') && Array.isArray(this.images) && this.images.length > 0) {
-    this.images = this.images.map((img, index) => {
-      if (typeof img === 'string') {
-        return { url: img, alt: '', order: index };
+    if (!this.slug && this.name) {
+      const baseSlug =
+        this.name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '') || 'product';
+
+      let slug = baseSlug;
+      let counter = 1;
+
+      while (
+        await mongoose.models.Product.exists({
+          slug,
+          _id: { $ne: this._id },
+        })
+      ) {
+        counter += 1;
+        slug = `${baseSlug}-${counter}`;
       }
-      if (typeof img === 'object' && img !== null) {
+
+      this.slug = slug;
+    }
+
+    // ---------------------------------------------------------
+    // IMAGE NORMALIZATION
+    // ---------------------------------------------------------
+
+    if (
+      this.isModified('images') &&
+      Array.isArray(this.images) &&
+      this.images.length > 0
+    ) {
+      this.images = this.images.map((img, index) => {
+        if (typeof img === 'string') {
+          return {
+            url: img,
+            alt: '',
+            order: index,
+          };
+        }
+
+        if (typeof img === 'object' && img !== null) {
+          return {
+            url: (img.url || img.imageUrl || img.src || img.path) || '',
+            alt: img.alt || '',
+            order: img.order !== undefined ? img.order : index,
+          };
+        }
+
         return {
-          url: (img.url || img.imageUrl || img.src || img.path) || '',
-          alt: img.alt || '',
-          order: img.order !== undefined ? img.order : index,
+          url: '',
+          alt: '',
+          order: index,
         };
-      }
-      return { url: '', alt: '', order: index };
-    });
+      });
 
-    this.images.sort((a, b) => (a.order || 0) - (b.order || 0));
-  }
+      this.images.sort(
+        (a, b) => (a.order || 0) - (b.order || 0)
+      );
+    }
 
-  if (this.images && this.images.length > 0 && !this.primaryImage) {
-    const firstImage = this.images[0];
-    this.primaryImage = typeof firstImage === 'string' ? firstImage : (firstImage.url || '');
+    // ---------------------------------------------------------
+    // PRIMARY IMAGE
+    // ---------------------------------------------------------
+
+    if (
+      this.images &&
+      this.images.length > 0 &&
+      !this.primaryImage
+    ) {
+      const firstImage = this.images[0];
+
+      this.primaryImage =
+        typeof firstImage === 'string'
+          ? firstImage
+          : firstImage.url || '';
+    }
+
+    next();
+  } catch (error) {
+    next(error);
   }
-  next();
 });
-
 module.exports = mongoose.model('Product', productSchema);
