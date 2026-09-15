@@ -1,6 +1,7 @@
 const http = require("http");
 const { URL } = require("url");
-const crypto = require("crypto");
+require("dotenv").config();
+const crypto = require('crypto');
 
 const clientId = process.env.GOOGLE_CLIENT_ID;
 const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -74,3 +75,6 @@ server.listen(5050, () => {
   console.log(authUrl.toString());
   console.log("\nWaiting for Google authorization...\n");
 });
+
+
+
