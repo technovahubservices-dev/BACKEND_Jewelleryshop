@@ -76,7 +76,6 @@ const buildAdminOrderResponse = (order) => {
     status: plain.status || 'new',
     paymentStatus: plain.paymentStatus || 'pending',
     shippingStatus: plain.shippingStatus || 'not_shipped',
-    trackingNumber: plain.trackingNumber || '',
     courier: plain.courier || '',
     shippedAt: plain.shippedAt,
     estimatedDeliveryDate: plain.estimatedDeliveryDate,
@@ -109,7 +108,6 @@ exports.adminGetOrders = asyncHandler(async (req, res) => {
     query.$or = [
       { orderNumber: searchRegex },
       { invoiceNumber: searchRegex },
-      { trackingNumber: searchRegex },
       { 'shippingAddress.fullName': searchRegex },
       { 'billingAddress.fullName': searchRegex },
       { 'shippingAddress.phone': searchRegex },
@@ -226,7 +224,7 @@ exports.adminGetOrder = asyncHandler(async (req, res) => {
 
 exports.adminUpdateOrderStatus = asyncHandler(async (req, res) => {
   const orderId = req.params.id;
-  const { status, note, trackingNumber, courier, estimatedDeliveryDate, shippingStatus } = req.body;
+  const { status, note, courier, estimatedDeliveryDate, shippingStatus } = req.body;
 
   if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
     return res.status(400).json({
@@ -278,10 +276,6 @@ exports.adminUpdateOrderStatus = asyncHandler(async (req, res) => {
     } else if (status === 'cancelled') {
       order.shippingStatus = 'not_shipped';
     }
-  }
-
-  if (trackingNumber !== undefined && trackingNumber !== null) {
-    order.trackingNumber = trackingNumber;
   }
 
   if (courier !== undefined && courier !== null) {
@@ -367,3 +361,4 @@ exports.adminDeleteOrder = asyncHandler(async (req, res) => {
     message: 'Order deleted successfully',
   });
 });
+
