@@ -400,6 +400,7 @@ exports.createProduct = async (req, res) => {
     if (minimumStock !== undefined && minimumStock !== '') productData.minimumStock = parseInt(minimumStock, 10);
     if (availableWeight) productData.availableWeight = availableWeight;
 
+    console.log('[SKU DEBUG] FINAL SKU BEFORE CREATE:', productData.sku);
     const product = await Product.create(productData);
 
     const responseProduct = normalizeProductImages(product);
@@ -1468,5 +1469,6 @@ exports.getRecentlyViewed = asyncHandler(async (req, res) => {
     });
   }
 });
+
 
 
