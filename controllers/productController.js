@@ -330,21 +330,28 @@ exports.createProduct = async (req, res) => {
 
     if (!sku) {
       const skuPrefix = generateSKU(name, category, metal);
-      let retries = 0;
-      while (retries < 5) {
+      let skuCreated = false;
+
+      for (let attempt = 0; attempt < 20; attempt++) {
         const skuNum = await getNextSkuNumber(skuPrefix);
-        sku = `${skuPrefix}-${skuNum}`;
+        const candidateSku = `${skuPrefix}-${skuNum}`;
 
-        const existing = await Product.findOne({ sku });
-        if (!existing) break;
+        const existingProduct = await Product.findOne({
+          sku: candidateSku,
+        }).select('_id').lean();
 
-        retries++;
-        if (retries >= 5) {
-          return res.status(400).json({
-            success: false,
-            message: 'Could not generate a unique SKU. Please provide a manual SKU.',
-          });
+        if (!existingProduct) {
+          sku = candidateSku;
+          skuCreated = true;
+          break;
         }
+      }
+
+      if (!skuCreated) {
+        return res.status(400).json({
+          success: false,
+          message: 'Could not generate a unique SKU. Please try again.',
+        });
       }
     }
 
@@ -1461,4 +1468,5 @@ exports.getRecentlyViewed = asyncHandler(async (req, res) => {
     });
   }
 });
+
 
