@@ -129,23 +129,19 @@ const generateSKU = (name, category, metal) => {
 };
 
 const getNextSkuNumber = async (skuPrefix) => {
-  const regex = new RegExp(`^${skuPrefix}-(\\d{3})$`);
-  const products = await Product.find({ sku: regex }).select('sku').lean();
-  const lastProduct = products.sort((a, b) => {
-    const aNum = parseInt(a.sku.match(regex)?.[1] || '0', 10);
-    const bNum = parseInt(b.sku.match(regex)?.[1] || '0', 10);
-    return bNum - aNum;
-  })[0];
+  for (let num = 1; num <= 999; num++) {
+    const sku = `${skuPrefix}-${String(num).padStart(3, '0')}`;
 
-  let num = 1;
-  if (lastProduct) {
-    const match = lastProduct.sku.match(regex);
-    if (match) {
-      num = parseInt(match[1], 10) + 1;
+    const existingProduct = await Product.findOne({
+      sku,
+    }).select('_id').lean();
+
+    if (!existingProduct) {
+      return String(num).padStart(3, '0');
     }
   }
 
-  return num.toString().padStart(3, '0');
+  throw new Error(`No available SKU number for prefix ${skuPrefix}`);
 };
 
 exports.createProduct = async (req, res) => {
@@ -1469,6 +1465,7 @@ exports.getRecentlyViewed = asyncHandler(async (req, res) => {
     });
   }
 });
+
 
 
 
