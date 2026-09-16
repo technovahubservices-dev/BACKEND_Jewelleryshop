@@ -5,6 +5,7 @@ const {
   getOrders,
   getOrder,
   getMyOrders,
+  deleteOrder,
   getOrderInvoice,
   convertQuotationToOrder,
   sendOrderStatusNotification,
@@ -22,7 +23,8 @@ router.route('/convert-from-quotation/:quotationId')
   .post(protect, admin, convertQuotationToOrder);
 
 router.route('/:id')
-  .get(protect, getOrder);
+  .get(protect, getOrder)
+  .delete(protect, admin, deleteOrder);
 
 router.get('/:id/invoice', protect, getOrderInvoice);
 
@@ -31,3 +33,4 @@ router.put('/:id/status', protect, admin, sendOrderStatusNotification);
 router.use('/payment', paymentRoutes);
 
 module.exports = router;
+

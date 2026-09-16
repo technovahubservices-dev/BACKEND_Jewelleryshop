@@ -399,6 +399,33 @@ exports.getOrder = asyncHandler(async (req, res) => {
   });
 });
 
+
+exports.deleteOrder = asyncHandler(async (req, res) => {
+  const orderId = req.params.id;
+
+  if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid order ID',
+    });
+  }
+
+  const order = await Order.findById(orderId);
+
+  if (!order) {
+    return res.status(404).json({
+      success: false,
+      message: 'Order not found',
+    });
+  }
+
+  await Order.findByIdAndDelete(orderId);
+
+  res.status(200).json({
+    success: true,
+    message: 'Order deleted successfully',
+  });
+});
 exports.getOrderInvoice = asyncHandler(async (req, res) => {
   const orderId = req.params.id || req.params.orderId;
 
@@ -693,3 +720,4 @@ exports.sendOrderStatusNotification = asyncHandler(async (req, res) => {
     data: buildOrderResponse(order),
   });
 });
+
