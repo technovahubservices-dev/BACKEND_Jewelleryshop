@@ -52,23 +52,7 @@ const productSchema = mongoose.Schema(
     },
     subcategory: {
       type: String,
-      enum: [
-        'Engagement Rings',
-        'Wedding Bands',
-        'Cocktail Rings',
-        'Promise Rings',
-        'Diamond Necklaces',
-        'Gold Chains',
-        'Pendant Sets',
-        'Diamond Earrings',
-        'Gold Earrings',
-        'Hoop Earrings',
-        'Stud Earrings',
-        'Bracelets',
-        'Bangles',
-        'Cuffs',
-        'Chain Bracelets',
-      ],
+      trim: true,
     },
     jewelleryCollection: {
       type: String,
@@ -308,3 +292,4 @@ productSchema.pre('save', async function (next) {
   }
 });
 module.exports = mongoose.model('Product', productSchema);
+

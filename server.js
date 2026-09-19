@@ -98,6 +98,7 @@ app.use('/api', apiLimiter);
 app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/products', require('./routes/productRoutes'));
 app.use('/api/categories', require('./routes/categoryRoutes'));
+app.use('/api/accessories', require('./routes/accessoryRoutes'));
 app.use('/api/orders', require('./routes/orderRoutes'));
 app.use('/api/cart', require('./routes/cartRoutes'));
 app.use('/api/wishlist', require('./routes/wishlistRoutes'));
@@ -166,4 +167,5 @@ const startServer = async () => {
 startServer();
 
 module.exports = { app };
+
 
