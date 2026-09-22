@@ -1454,6 +1454,7 @@ module.exports = {
   updateHomepageTab,
   updateHomepageTabWithUpload,
   uploadImage,
+  uploadHomepageMedia,
   uploadVideoReel,
   updateVideoReel,
   deleteVideoReel,
@@ -1461,6 +1462,3 @@ module.exports = {
   toggleVideoReel,
   getVideoReelsPublic,
 };
-
-
-
