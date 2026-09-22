@@ -1393,6 +1393,53 @@ const updateHomepageTab = asyncHandler(async (req, res) => {
   });
 });
 
+
+const uploadHomepageMedia = asyncHandler(async (req, res) => {
+  const uploadedFile =
+    req.file ||
+    req.files?.image?.[0] ||
+    req.files?.file?.[0];
+
+  if (!uploadedFile) {
+    return res.status(400).json({
+      success: false,
+      message: 'No file uploaded',
+    });
+  }
+
+  const driveFile = await uploadRequestFileToGoogleDrive(
+    { ...req, file: uploadedFile },
+    { makePublic: true }
+  );
+
+  if (!driveFile || !driveFile.id) {
+    return res.status(500).json({
+      success: false,
+      message: 'Google Drive upload failed. No file ID was returned.',
+    });
+  }
+
+  const url = driveFile.viewUrl || driveFile.url;
+
+  console.log('[Homepage Media Upload] Uploaded file', {
+    fileId: driveFile.id,
+    url,
+    originalName: uploadedFile.originalname,
+    mimeType: uploadedFile.mimetype,
+  });
+
+  return res.status(201).json({
+    success: true,
+    message: 'Media uploaded successfully',
+    url,
+    data: {
+      fileId: driveFile.id,
+      url,
+      originalName: uploadedFile.originalname,
+      mimeType: uploadedFile.mimetype,
+    },
+  });
+});
 module.exports = {
   getAll,
   getActive,
@@ -1414,3 +1461,6 @@ module.exports = {
   toggleVideoReel,
   getVideoReelsPublic,
 };
+
+
+

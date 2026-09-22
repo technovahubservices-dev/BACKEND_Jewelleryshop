@@ -15,6 +15,7 @@ const {
   updateHomepageTab,
   updateHomepageTabWithUpload,
   uploadImage,
+  uploadHomepageMedia,
   uploadVideoReel,
   updateVideoReel,
   deleteVideoReel,
@@ -71,6 +72,9 @@ router.route('/homepage/upload')
     contentImageMiddleware,
     uploadImage
   );
+
+router.route('/homepage/media-upload')
+  .post(protect, admin, contentImageMiddleware, uploadHomepageMedia);
 
 router.route('/homepage/settings/updateTab')
   .put(protect, admin, updateHomepageTab);
@@ -140,3 +144,5 @@ router.use((err, req, res, next) => {
 });
 
 module.exports = router;
+
+
