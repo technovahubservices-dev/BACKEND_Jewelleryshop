@@ -110,6 +110,7 @@ app.use('/api/admin', require('./routes/adminDashboardRoutes'));
 app.use('/api/admin/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/admin/orders', require('./routes/adminOrderRoutes'));
 app.use('/api/integrations', require('./routes/googleDriveRoutes'));
+app.use('/api/auth', require('./routes/googleDriveRoutes'));
 app.use('/api/contact', require('./routes/contactRoutes'));
 app.use('/api', require('./routes/driveProxyRoutes'));
 
@@ -167,5 +168,3 @@ const startServer = async () => {
 startServer();
 
 module.exports = { app };
-
-
