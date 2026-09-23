@@ -532,13 +532,42 @@ const deleteFileFromGoogleDrive = async ({ userId, fileId }) => {
 };
 
 const getFileIdFromUrl = (url) => {
-  if (!url || typeof url !== 'string') return null;
+  if (!url || typeof url !== 'string') {
+    return null;
+  }
 
-  const driveFileId = getGoogleDriveFileId(url);
-  if (driveFileId) return driveFileId;
+  const trimmedUrl = url.trim();
 
-  const proxyMatch = url.match(/^\/api\/upload\/drive\/(.+)$/);
-  if (proxyMatch) return proxyMatch[1];
+  if (!trimmedUrl) {
+    return null;
+  }
+
+  // Direct Google Drive URL
+  const driveFileId = getGoogleDriveFileId(trimmedUrl);
+
+  if (driveFileId) {
+    return driveFileId;
+  }
+
+  // Relative proxy URL:
+  // /api/upload/drive/FILE_ID
+  const relativeProxyMatch = trimmedUrl.match(
+    /^\/api\/upload\/drive\/([^/?#]+)/
+  );
+
+  if (relativeProxyMatch) {
+    return decodeURIComponent(relativeProxyMatch[1]);
+  }
+
+  // Absolute proxy URL:
+  // https://backend-domain.com/api/upload/drive/FILE_ID
+  const absoluteProxyMatch = trimmedUrl.match(
+    /\/api\/upload\/drive\/([^/?#]+)/
+  );
+
+  if (absoluteProxyMatch) {
+    return decodeURIComponent(absoluteProxyMatch[1]);
+  }
 
   return null;
 };
