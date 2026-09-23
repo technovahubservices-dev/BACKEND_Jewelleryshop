@@ -1371,20 +1371,157 @@ const updateHomepageTab = asyncHandler(async (req, res) => {
   }
 
   const safeUpdates = {};
+
   for (const key of Object.keys(updates)) {
-    if (key === '_id' || key === '__v' || key === 'createdAt' || key === 'updatedAt') continue;
+    if (
+      key === '_id' ||
+      key === '__v' ||
+      key === 'createdAt' ||
+      key === 'updatedAt'
+    ) {
+      continue;
+    }
+
     if (updates[key] !== undefined && updates[key] !== null) {
       safeUpdates[key] = updates[key];
     }
   }
 
-  const updated = await mongoose.model('HomepageSetting').findOneAndUpdate(
-    { _id: settings._id },
-    { $set: safeUpdates },
-    { new: true, runValidators: true }
+  /*
+   * Collect all homepage media URLs.
+   * This is used to find images/videos that were removed
+   * from the admin Content Management screen.
+   */
+  const getHomepageMediaUrls = (source) => {
+    const urls = [];
+
+    if (!source || typeof source !== 'object') {
+      return urls;
+    }
+
+    for (const field of HOMEPAGE_IMAGE_URL_FIELDS) {
+      const value = source[field];
+
+      if (typeof value === 'string' && value.trim()) {
+        urls.push(value.trim());
+      }
+    }
+
+    for (const { key, subKey } of HOMEPAGE_IMAGE_URL_ARRAY_FIELDS) {
+      const items = source[key];
+
+      if (!Array.isArray(items)) {
+        continue;
+      }
+
+      for (const item of items) {
+        if (!item || typeof item !== 'object') {
+          continue;
+        }
+
+        const value = item[subKey];
+
+        if (typeof value === 'string' && value.trim()) {
+          urls.push(value.trim());
+        }
+      }
+    }
+
+    return urls;
+  };
+
+  /*
+   * Build the complete NEW homepage state.
+   * Only the fields sent by this tab are replaced.
+   * All other homepage fields remain unchanged.
+   */
+  const currentSettings =
+    typeof settings.toObject === 'function'
+      ? settings.toObject()
+      : settings;
+
+  const mergedHomepageState = {
+    ...currentSettings,
+    ...safeUpdates,
+  };
+
+  const oldHomepageUrls = getHomepageMediaUrls(currentSettings);
+  const newHomepageUrls = getHomepageMediaUrls(mergedHomepageState);
+
+  const normalizeMediaUrl = (url) => {
+    try {
+      return normalizeGoogleDriveUrl(url) || url;
+    } catch {
+      return url;
+    }
+  };
+
+  const newUrlSet = new Set(
+    newHomepageUrls
+      .filter(Boolean)
+      .map(normalizeMediaUrl)
   );
 
-  const plainUpdated = typeof updated?.toObject === 'function' ? updated.toObject() : updated;
+  /*
+   * Find files that existed before the save but are no longer
+   * referenced anywhere in the new homepage settings.
+   */
+  const removedHomepageUrls = [
+    ...new Set(
+      oldHomepageUrls
+        .filter(Boolean)
+        .map((url) => ({
+          original: url,
+          normalized: normalizeMediaUrl(url),
+        }))
+        .filter(({ normalized }) => !newUrlSet.has(normalized))
+        .map(({ original }) => original)
+    ),
+  ];
+
+  const updated = await mongoose
+    .model('HomepageSetting')
+    .findOneAndUpdate(
+      { _id: settings._id },
+      { $set: safeUpdates },
+      {
+        new: true,
+        runValidators: true,
+      }
+    );
+
+  /*
+   * MongoDB update succeeded.
+   * Now delete only media that is no longer referenced
+   * anywhere in the homepage settings.
+   */
+  if (removedHomepageUrls.length > 0) {
+    try {
+      await deleteDriveFilesForUrls({
+        userId: req.user._id,
+        urls: removedHomepageUrls,
+      });
+
+      console.log(
+        '[Homepage Settings] Deleted removed Drive media',
+        {
+          tab,
+          count: removedHomepageUrls.length,
+          urls: removedHomepageUrls,
+        }
+      );
+    } catch (driveError) {
+      console.error(
+        '[Homepage Settings] Failed to delete removed Drive media:',
+        driveError
+      );
+    }
+  }
+
+  const plainUpdated =
+    typeof updated?.toObject === 'function'
+      ? updated.toObject()
+      : updated;
 
   res.status(200).json({
     success: true,
