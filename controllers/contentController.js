@@ -541,8 +541,9 @@ const uploadImage = asyncHandler(async (req, res) => {
       message: 'No file uploaded',
     });
   }
+  req.file = uploadedFile;
   const driveFile = await uploadRequestFileToGoogleDrive(
-    { ...req, file: uploadedFile },
+    req,
     { makePublic: true }
   );
   const url = driveFile.viewUrl || driveFile.url;
