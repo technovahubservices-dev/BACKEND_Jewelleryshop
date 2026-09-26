@@ -221,7 +221,17 @@ const repairDriveUrl = (url) => {
 };
 
 const getAccessToken = async (userId, { forceRefresh = false } = {}) => {
-  const connection = await GoogleDriveConnection.findOne({ user: userId });
+  let connection;
+
+  if (userId) {
+    connection = await GoogleDriveConnection.findOne({ user: userId });
+  }
+
+  // Fallback for public image/video requests
+  if (!connection) {
+    connection = await GoogleDriveConnection.findOne({})
+      .sort({ createdAt: -1 });
+  }
 
   if (!connection || !connection.refreshTokenEncrypted) {
     throw driveError('Connect Google Drive before uploading files');
