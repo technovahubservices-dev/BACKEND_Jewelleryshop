@@ -194,9 +194,11 @@ const handleGoogleDriveCallback = asyncHandler(async (req, res) => {
   });
 });
 const getGoogleDriveStatus = asyncHandler(async (req, res) => {
-  const connection = await GoogleDriveConnection.findOne({ user: req.user._id });
+  const connection = await GoogleDriveConnection.findOne({
+    user: req.user._id,
+  });
 
-  if (!connection) {
+  if (!connection || !connection.refreshTokenEncrypted) {
     return res.status(200).json({
       success: true,
       connected: false,
@@ -205,28 +207,29 @@ const getGoogleDriveStatus = asyncHandler(async (req, res) => {
     });
   }
 
-  let connected = false;
-
   try {
-    const refreshToken = connection.refreshTokenEncrypted
-      ? decryptValue(connection.refreshTokenEncrypted)
-      : '';
+    await getAccessToken(req.user._id, { forceRefresh: true });
 
-    const accessToken = connection.accessTokenEncrypted
-      ? decryptValue(connection.accessTokenEncrypted)
-      : '';
-
-    connected = Boolean(refreshToken || accessToken);
+    return res.status(200).json({
+      success: true,
+      connected: true,
+      email: connection.email || null,
+      connectedAt: connection.connectedAt || null,
+    });
   } catch (error) {
-    connected = false;
-  }
+    console.warn('[Google Drive Status] Authorization is invalid:', error.message);
 
-  return res.status(200).json({
-    success: true,
-    connected,
-    email: connected ? connection.email || null : null,
-    connectedAt: connected ? connection.connectedAt || null : null,
-  });
+    await GoogleDriveConnection.deleteOne({
+      _id: connection._id,
+    });
+
+    return res.status(200).json({
+      success: true,
+      connected: false,
+      email: null,
+      connectedAt: null,
+    });
+  }
 });
 
 const disconnectGoogleDrive = asyncHandler(async (req, res) => {
