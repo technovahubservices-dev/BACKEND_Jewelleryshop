@@ -14,7 +14,8 @@ const { encryptValue, decryptValue } = require('../utils/googleDriveCrypto');
 
 const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const GOOGLE_REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
-const GOOGLE_DRIVE_ABOUT_ENDPOINT = 'https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName,photoLink)';
+const GOOGLE_DRIVE_ABOUT_ENDPOINT =
+  'https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName,photoLink)';
 
 const redirectWithGoogleDriveStatus = (res, query) => {
   try {
@@ -47,7 +48,11 @@ const exchangeGoogleCodeForTokens = async (code, config) => {
   const data = await response.json();
 
   if (!response.ok) {
-    const message = data.error_description || data.error || 'Unable to exchange Google authorization code';
+    const message =
+      data.error_description ||
+      data.error ||
+      'Unable to exchange Google authorization code';
+
     throw new Error(message);
   }
 
@@ -74,6 +79,7 @@ const revokeGoogleToken = async (token) => {
   }
 
   const body = new URLSearchParams({ token });
+
   await fetch(GOOGLE_REVOKE_ENDPOINT, {
     method: 'POST',
     headers: {
@@ -89,8 +95,14 @@ const startGoogleDriveAuth = asyncHandler(async (req, res) => {
   const state = createGoogleDriveState(req.user);
   const authUrl = buildGoogleDriveAuthUrl(state);
 
-  if (req.headers.accept && req.headers.accept.includes('application/json')) {
-    return res.json({ success: true, authUrl });
+  if (
+    req.headers.accept &&
+    req.headers.accept.includes('application/json')
+  ) {
+    return res.json({
+      success: true,
+      authUrl,
+    });
   }
 
   res.redirect(302, authUrl);
@@ -121,6 +133,7 @@ const handleGoogleDriveCallback = asyncHandler(async (req, res) => {
   }
 
   let config;
+
   try {
     config = getRequiredGoogleConfig();
   } catch (configError) {
@@ -131,8 +144,12 @@ const handleGoogleDriveCallback = asyncHandler(async (req, res) => {
   }
 
   let decodedState;
+
   try {
-    decodedState = require('jsonwebtoken').verify(state, process.env.JWT_SECRET);
+    decodedState = require('jsonwebtoken').verify(
+      state,
+      process.env.JWT_SECRET
+    );
   } catch (verifyError) {
     return redirectWithGoogleDriveStatus(res, {
       googleDrive: 'error',
@@ -141,6 +158,7 @@ const handleGoogleDriveCallback = asyncHandler(async (req, res) => {
   }
 
   const storedState = consumeGoogleDriveState(state);
+
   if (
     !storedState ||
     storedState.userId !== String(decodedState.userId) ||
@@ -154,6 +172,7 @@ const handleGoogleDriveCallback = asyncHandler(async (req, res) => {
   }
 
   const user = await User.findById(storedState.userId);
+
   if (!user || !user.isAdmin) {
     return redirectWithGoogleDriveStatus(res, {
       googleDrive: 'error',
@@ -162,30 +181,76 @@ const handleGoogleDriveCallback = asyncHandler(async (req, res) => {
   }
 
   const tokenData = await exchangeGoogleCodeForTokens(code, config);
-  const existingConnection = await GoogleDriveConnection.findOne({ user: user._id });
 
-  const accountData = await fetchGoogleDriveAccount(tokenData.access_token);
+  const existingConnection = await GoogleDriveConnection.findOne({
+    user: user._id,
+  });
+
+  const accountData = await fetchGoogleDriveAccount(
+    tokenData.access_token
+  );
+
   const accessToken = tokenData.access_token || '';
   const refreshToken = tokenData.refresh_token || '';
 
-  const connection = existingConnection || new GoogleDriveConnection({ user: user._id });
-  connection.googleAccountId = accountData?.user?.emailAddress || connection.googleAccountId || '';
-  connection.email = accountData?.user?.emailAddress || connection.email || user.email;
-  connection.scope = typeof tokenData.scope === 'string'
-    ? tokenData.scope.split(/\s+/).filter(Boolean)
-    : getScopes();
-  connection.accessTokenEncrypted = encryptValue(accessToken);
-  connection.refreshTokenEncrypted = encryptValue(refreshToken || decryptValue(existingConnection?.refreshTokenEncrypted || ''));
-  connection.tokenExpiresAt = tokenData.expires_in ? new Date(Date.now() + (Number(tokenData.expires_in) * 1000)) : null;
-  connection.connectedAt = connection.connectedAt || new Date();
-  connection.lastRefreshedAt = new Date();
+  const connection =
+    existingConnection ||
+    new GoogleDriveConnection({
+      user: user._id,
+    });
 
-  if (!connection.refreshTokenEncrypted && !existingConnection?.refreshTokenEncrypted) {
+  connection.googleAccountId =
+    accountData?.user?.emailAddress ||
+    connection.googleAccountId ||
+    '';
+
+  connection.email =
+    accountData?.user?.emailAddress ||
+    connection.email ||
+    user.email;
+
+  connection.scope =
+    typeof tokenData.scope === 'string'
+      ? tokenData.scope.split(/\s+/).filter(Boolean)
+      : getScopes();
+
+  connection.accessTokenEncrypted = encryptValue(accessToken);
+
+  /*
+   * Google may not send a new refresh token when reconnecting.
+   * In that case, keep the existing refresh token.
+   */
+  let refreshTokenToStore = refreshToken;
+
+  if (!refreshTokenToStore && existingConnection?.refreshTokenEncrypted) {
+    try {
+      refreshTokenToStore = decryptValue(
+        existingConnection.refreshTokenEncrypted
+      );
+    } catch (decryptError) {
+      refreshTokenToStore = '';
+    }
+  }
+
+  if (!refreshTokenToStore) {
     return redirectWithGoogleDriveStatus(res, {
       googleDrive: 'error',
       reason: sanitizeReason('oauth_failed'),
     });
   }
+
+  connection.refreshTokenEncrypted = encryptValue(refreshTokenToStore);
+
+  connection.tokenExpiresAt = tokenData.expires_in
+    ? new Date(
+        Date.now() + Number(tokenData.expires_in) * 1000
+      )
+    : null;
+
+  connection.connectedAt =
+    connection.connectedAt || new Date();
+
+  connection.lastRefreshedAt = new Date();
 
   await connection.save();
 
@@ -193,11 +258,15 @@ const handleGoogleDriveCallback = asyncHandler(async (req, res) => {
     googleDrive: 'connected',
   });
 });
+
 const getGoogleDriveStatus = asyncHandler(async (req, res) => {
   const connection = await GoogleDriveConnection.findOne({
     user: req.user._id,
   });
 
+  /*
+   * No saved connection or no refresh token means disconnected.
+   */
   if (!connection || !connection.refreshTokenEncrypted) {
     return res.status(200).json({
       success: true,
@@ -207,33 +276,24 @@ const getGoogleDriveStatus = asyncHandler(async (req, res) => {
     });
   }
 
-  try {
-    await getAccessToken(req.user._id, { forceRefresh: true });
-
-    return res.status(200).json({
-      success: true,
-      connected: true,
-      email: connection.email || null,
-      connectedAt: connection.connectedAt || null,
-    });
-  } catch (error) {
-    console.warn('[Google Drive Status] Authorization is invalid:', error.message);
-
-    await GoogleDriveConnection.deleteOne({
-      _id: connection._id,
-    });
-
-    return res.status(200).json({
-      success: true,
-      connected: false,
-      email: null,
-      connectedAt: null,
-    });
-  }
+  /*
+   * A saved refresh token means the user has connected Google Drive.
+   *
+   * We do NOT force-refresh the token here.
+   * Token validity is checked when Drive is actually accessed.
+   */
+  return res.status(200).json({
+    success: true,
+    connected: true,
+    email: connection.email || null,
+    connectedAt: connection.connectedAt || null,
+  });
 });
 
 const disconnectGoogleDrive = asyncHandler(async (req, res) => {
-  const connection = await GoogleDriveConnection.findOne({ user: req.user._id });
+  const connection = await GoogleDriveConnection.findOne({
+    user: req.user._id,
+  });
 
   if (!connection) {
     return res.status(200).json({
@@ -243,6 +303,7 @@ const disconnectGoogleDrive = asyncHandler(async (req, res) => {
   }
 
   let tokenToRevoke = '';
+
   try {
     tokenToRevoke = connection.refreshTokenEncrypted
       ? decryptValue(connection.refreshTokenEncrypted)
@@ -254,10 +315,15 @@ const disconnectGoogleDrive = asyncHandler(async (req, res) => {
   try {
     await revokeGoogleToken(tokenToRevoke);
   } catch (revokeError) {
-    console.warn('Google Drive token revocation failed:', revokeError.message);
+    console.warn(
+      'Google Drive token revocation failed:',
+      revokeError.message
+    );
   }
 
-  await GoogleDriveConnection.deleteOne({ _id: connection._id });
+  await GoogleDriveConnection.deleteOne({
+    _id: connection._id,
+  });
 
   return res.status(200).json({
     success: true,
