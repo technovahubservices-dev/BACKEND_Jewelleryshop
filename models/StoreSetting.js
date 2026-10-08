@@ -21,6 +21,29 @@ const storeSettingSchema = mongoose.Schema(
       maxlength: [30, 'Phone cannot exceed 30 characters'],
       default: '+1 (555) 019-8234',
     },
+    address: {
+  type: String,
+  trim: true,
+  maxlength: [500, 'Address cannot exceed 500 characters'],
+  default: '',
+},
+instagramUrl: {
+  type: String,
+  trim: true,
+  default: 'https://instagram.com',
+},
+instagramUsername: {
+  type: String,
+  trim: true,
+  maxlength: [100, 'Instagram username cannot exceed 100 characters'],
+  default: '@jkrjewellery',
+},
+contactDescription: {
+  type: String,
+  trim: true,
+  maxlength: [1000, 'Contact description cannot exceed 1000 characters'],
+  default: 'We would love to hear from you. Reach out for appointments, custom orders, or any questions about our collections.',
+},
     currency: {
       type: String,
       trim: true,

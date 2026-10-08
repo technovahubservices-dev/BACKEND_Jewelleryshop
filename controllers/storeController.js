@@ -3,8 +3,17 @@ const StoreSetting = require('../models/StoreSetting');
 
 const SUPPORTED_CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AED', 'JPY', 'CAD', 'AUD', 'SGD'];
 
-const ALLOWED_STORE_FIELDS = ['storeName', 'email', 'phone', 'currency', 'policies'];
-
+const ALLOWED_STORE_FIELDS = [
+  'storeName',
+  'email',
+  'phone',
+  'address',
+  'instagramUrl',
+  'instagramUsername',
+  'contactDescription',
+  'currency',
+  'policies',
+];
 const POLICY_TYPES = [
   'authenticity', 'purity', 'returns', 'exchange',
   'warranty', 'shipping', 'care', 'customisation',
@@ -27,15 +36,19 @@ const sanitizeSettings = (doc) => {
         }))
     : [];
 
-  return {
-    _id: plain._id,
-    storeName: plain.storeName,
-    email: plain.email,
-    phone: plain.phone,
-    currency: plain.currency,
-    policies,
-    createdAt: plain.createdAt,
-    updatedAt: plain.updatedAt,
+ return {
+  _id: plain._id,
+  storeName: plain.storeName,
+  email: plain.email,
+  phone: plain.phone,
+  address: plain.address,
+  instagramUrl: plain.instagramUrl,
+  instagramUsername: plain.instagramUsername,
+  contactDescription: plain.contactDescription,
+  currency: plain.currency,
+   policies,
+  createdAt: plain.createdAt,
+  updatedAt: plain.updatedAt,
   };
 };
 
@@ -64,11 +77,15 @@ const getPublicStoreSettings = asyncHandler(async (req, res) => {
   res.status(200).json({
     success: true,
     data: {
-      storeName: plain.storeName,
-      email: plain.email,
-      phone: plain.phone,
-      currency: plain.currency,
-      policies,
+       storeName: plain.storeName,
+  email: plain.email,
+  phone: plain.phone,
+  address: plain.address,
+  instagramUrl: plain.instagramUrl,
+  instagramUsername: plain.instagramUsername,
+  contactDescription: plain.contactDescription,
+  currency: plain.currency,
+  policies,
     },
   });
 });
@@ -113,6 +130,47 @@ const updateStoreSettings = asyncHandler(async (req, res) => {
       return res.status(400).json({ success: false, message: 'Phone cannot exceed 30 characters' });
     }
     updateData.phone = trimmed;
+  }
+
+  if (updateData.address !== undefined) {
+    const trimmed = String(updateData.address).trim();
+    if (!trimmed) {
+      return res.status(400).json({ success: false, message: 'Address cannot be empty' });
+    }
+    if (trimmed.length > 500) {
+      return res.status(400).json({ success: false, message: 'Address cannot exceed 500 characters' });
+    }
+    updateData.address = trimmed;
+  }
+
+  if (updateData.instagramUrl !== undefined) {
+    const trimmed = String(updateData.instagramUrl).trim();
+    if (!trimmed) {
+      return res.status(400).json({ success: false, message: 'Instagram URL cannot be empty' });
+    }
+    updateData.instagramUrl = trimmed;
+  }
+
+  if (updateData.instagramUsername !== undefined) {
+    const trimmed = String(updateData.instagramUsername).trim();
+    if (!trimmed) {
+      return res.status(400).json({ success: false, message: 'Instagram username cannot be empty' });
+    }
+    if (trimmed.length > 100) {
+      return res.status(400).json({ success: false, message: 'Instagram username cannot exceed 100 characters' });
+    }
+    updateData.instagramUsername = trimmed;
+  }
+
+  if (updateData.contactDescription !== undefined) {
+    const trimmed = String(updateData.contactDescription).trim();
+    if (!trimmed) {
+      return res.status(400).json({ success: false, message: 'Contact description cannot be empty' });
+    }
+    if (trimmed.length > 1000) {
+      return res.status(400).json({ success: false, message: 'Contact description cannot exceed 1000 characters' });
+    }
+    updateData.contactDescription = trimmed;
   }
 
   if (updateData.currency !== undefined) {
