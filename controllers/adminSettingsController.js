@@ -3,7 +3,17 @@ const StoreSetting = require('../models/StoreSetting');
 
 const SUPPORTED_CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'AED', 'JPY', 'CAD', 'AUD', 'SGD'];
 
-const ALLOWED_STORE_FIELDS = ['storeName', 'email', 'phone', 'currency', 'policies'];
+const ALLOWED_STORE_FIELDS = [
+  'storeName',
+  'email',
+  'phone',
+  'address',
+  'instagramUrl',
+  'instagramUsername',
+  'contactDescription',
+  'currency',
+  'policies',
+];
 
 const POLICY_TYPES = [
   'authenticity', 'purity', 'returns', 'exchange',
@@ -12,6 +22,7 @@ const POLICY_TYPES = [
 
 const sanitizeSettings = (doc) => {
   const plain = typeof doc?.toObject === 'function' ? doc.toObject() : doc;
+
   const policies = Array.isArray(plain.policies)
     ? plain.policies
         .filter((p) => p && p.isActive !== false)
@@ -23,7 +34,10 @@ const sanitizeSettings = (doc) => {
           icon: p.icon || '',
           sortOrder: p.sortOrder || 0,
           isActive: p.isActive !== undefined ? p.isActive : true,
-          collapsedByDefault: p.collapsedByDefault !== undefined ? p.collapsedByDefault : false,
+          collapsedByDefault:
+            p.collapsedByDefault !== undefined
+              ? p.collapsedByDefault
+              : false,
         }))
     : [];
 
@@ -32,6 +46,10 @@ const sanitizeSettings = (doc) => {
     storeName: plain.storeName,
     email: plain.email,
     phone: plain.phone,
+    address: plain.address,
+    instagramUrl: plain.instagramUrl,
+    instagramUsername: plain.instagramUsername,
+    contactDescription: plain.contactDescription,
     currency: plain.currency,
     policies,
     createdAt: plain.createdAt,
@@ -41,7 +59,11 @@ const sanitizeSettings = (doc) => {
 
 const getAdminSettings = asyncHandler(async (req, res) => {
   const settings = await StoreSetting.getSettings();
-  res.status(200).json({ success: true, data: sanitizeSettings(settings) });
+
+  res.status(200).json({
+    success: true,
+    data: sanitizeSettings(settings),
+  });
 });
 
 const updateAdminSettings = asyncHandler(async (req, res) => {
@@ -55,48 +77,154 @@ const updateAdminSettings = asyncHandler(async (req, res) => {
 
   if (updateData.storeName !== undefined) {
     const trimmed = String(updateData.storeName).trim();
+
     if (!trimmed) {
-      return res.status(400).json({ success: false, message: 'Store name cannot be empty' });
+      return res.status(400).json({
+        success: false,
+        message: 'Store name cannot be empty',
+      });
     }
+
     if (trimmed.length > 120) {
-      return res.status(400).json({ success: false, message: 'Store name cannot exceed 120 characters' });
+      return res.status(400).json({
+        success: false,
+        message: 'Store name cannot exceed 120 characters',
+      });
     }
+
     updateData.storeName = trimmed;
   }
 
   if (updateData.email !== undefined) {
     const trimmed = String(updateData.email).trim().toLowerCase();
+
     if (!trimmed) {
-      return res.status(400).json({ success: false, message: 'Email cannot be empty' });
+      return res.status(400).json({
+        success: false,
+        message: 'Email cannot be empty',
+      });
     }
+
     if (!/^\S+@\S+\.\S+$/.test(trimmed)) {
-      return res.status(400).json({ success: false, message: 'Please provide a valid email' });
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid email',
+      });
     }
+
     updateData.email = trimmed;
   }
 
   if (updateData.phone !== undefined) {
     const trimmed = String(updateData.phone).trim();
+
     if (!trimmed) {
-      return res.status(400).json({ success: false, message: 'Phone cannot be empty' });
+      return res.status(400).json({
+        success: false,
+        message: 'Phone cannot be empty',
+      });
     }
+
     if (trimmed.length > 30) {
-      return res.status(400).json({ success: false, message: 'Phone cannot exceed 30 characters' });
+      return res.status(400).json({
+        success: false,
+        message: 'Phone cannot exceed 30 characters',
+      });
     }
+
     updateData.phone = trimmed;
+  }
+
+  if (updateData.address !== undefined) {
+    const trimmed = String(updateData.address).trim();
+
+    if (!trimmed) {
+      return res.status(400).json({
+        success: false,
+        message: 'Address cannot be empty',
+      });
+    }
+
+    if (trimmed.length > 500) {
+      return res.status(400).json({
+        success: false,
+        message: 'Address cannot exceed 500 characters',
+      });
+    }
+
+    updateData.address = trimmed;
+  }
+
+  if (updateData.instagramUrl !== undefined) {
+    const trimmed = String(updateData.instagramUrl).trim();
+
+    if (!trimmed) {
+      return res.status(400).json({
+        success: false,
+        message: 'Instagram URL cannot be empty',
+      });
+    }
+
+    updateData.instagramUrl = trimmed;
+  }
+
+  if (updateData.instagramUsername !== undefined) {
+    const trimmed = String(updateData.instagramUsername).trim();
+
+    if (!trimmed) {
+      return res.status(400).json({
+        success: false,
+        message: 'Instagram username cannot be empty',
+      });
+    }
+
+    if (trimmed.length > 100) {
+      return res.status(400).json({
+        success: false,
+        message: 'Instagram username cannot exceed 100 characters',
+      });
+    }
+
+    updateData.instagramUsername = trimmed;
+  }
+
+  if (updateData.contactDescription !== undefined) {
+    const trimmed = String(updateData.contactDescription).trim();
+
+    if (!trimmed) {
+      return res.status(400).json({
+        success: false,
+        message: 'Contact description cannot be empty',
+      });
+    }
+
+    if (trimmed.length > 1000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Contact description cannot exceed 1000 characters',
+      });
+    }
+
+    updateData.contactDescription = trimmed;
   }
 
   if (updateData.currency !== undefined) {
     const trimmed = String(updateData.currency).trim().toUpperCase();
+
     if (!trimmed) {
-      return res.status(400).json({ success: false, message: 'Currency cannot be empty' });
+      return res.status(400).json({
+        success: false,
+        message: 'Currency cannot be empty',
+      });
     }
+
     if (!SUPPORTED_CURRENCIES.includes(trimmed)) {
       return res.status(400).json({
         success: false,
         message: `Currency must be one of: ${SUPPORTED_CURRENCIES.join(', ')}`,
       });
     }
+
     updateData.currency = trimmed;
   }
 
@@ -107,28 +235,44 @@ const updateAdminSettings = asyncHandler(async (req, res) => {
         message: 'Policies must be an array',
       });
     }
+
     try {
       updateData.policies = updateData.policies.map((p, index) => {
         if (!p || typeof p !== 'object') {
           throw new Error(`Policy at index ${index} must be an object`);
         }
+
         if (!p.type || !POLICY_TYPES.includes(p.type)) {
-          throw new Error(`Invalid policy type at index ${index}. Valid types: ${POLICY_TYPES.join(', ')}`);
+          throw new Error(
+            `Invalid policy type at index ${index}. Valid types: ${POLICY_TYPES.join(', ')}`
+          );
         }
+
         if (!p.title || !String(p.title).trim()) {
           throw new Error(`Policy title is required at index ${index}`);
         }
+
         if (!p.description || !String(p.description).trim()) {
           throw new Error(`Policy description is required at index ${index}`);
         }
+
         return {
           type: p.type,
           title: String(p.title).trim(),
           description: String(p.description).trim(),
           icon: p.icon ? String(p.icon).trim() : '',
-          sortOrder: typeof p.sortOrder === 'number' ? p.sortOrder : index + 1,
-          isActive: p.isActive !== undefined ? p.isActive : true,
-          collapsedByDefault: p.collapsedByDefault !== undefined ? p.collapsedByDefault : false,
+          sortOrder:
+            typeof p.sortOrder === 'number'
+              ? p.sortOrder
+              : index + 1,
+          isActive:
+            p.isActive !== undefined
+              ? p.isActive
+              : true,
+          collapsedByDefault:
+            p.collapsedByDefault !== undefined
+              ? p.collapsedByDefault
+              : false,
         };
       });
     } catch (validationError) {
@@ -141,6 +285,7 @@ const updateAdminSettings = asyncHandler(async (req, res) => {
 
   if (Object.keys(updateData).length === 0) {
     const existing = await StoreSetting.getSettings();
+
     return res.status(200).json({
       success: true,
       message: 'No store information to update',
@@ -151,7 +296,12 @@ const updateAdminSettings = asyncHandler(async (req, res) => {
   const updated = await StoreSetting.findOneAndUpdate(
     {},
     { $set: updateData },
-    { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
+    {
+      new: true,
+      upsert: true,
+      runValidators: true,
+      setDefaultsOnInsert: true,
+    }
   ).exec();
 
   if (!updated) {
