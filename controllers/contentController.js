@@ -502,11 +502,11 @@ const updateHomepageSettings = asyncHandler(async (req, res) => {
   const settings = await mongoose.model('HomepageSetting').getSettings();
   const updates = normalizeHomepageImageUrls(req.body);
 
-  if (Array.isArray(updates.categories)) {
+  if (tab === 'categories' && Array.isArray(updates.categories)) {
     await validateCategoryReferences(updates.categories);
   }
 
-  if (Array.isArray(updates.videoReels)) {
+  if (tab === 'videoReels' && Array.isArray(updates.videoReels)) {
     await validateAndResolveVideoReelSkus(updates.videoReels);
   }
 
