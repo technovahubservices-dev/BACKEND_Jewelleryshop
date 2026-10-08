@@ -1363,11 +1363,11 @@ const updateHomepageTab = asyncHandler(async (req, res) => {
 
   const updates = normalizeHomepageImageUrls(payload);
 
-  if (Array.isArray(updates.categories)) {
+  if (tab === 'categories' && Array.isArray(updates.categories)){
     await validateCategoryReferences(updates.categories);
   }
 
-  if (Array.isArray(updates.videoReels)) {
+if (tab === 'videoReels' && Array.isArray(updates.videoReels)) {
     await validateAndResolveVideoReelSkus(updates.videoReels);
   }
 
