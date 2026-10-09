@@ -1498,19 +1498,38 @@ if (tab === 'videoReels' && Array.isArray(updates.videoReels)) {
    */
   if (removedHomepageUrls.length > 0) {
     try {
-      await deleteDriveFilesForUrls({
-        userId: req.user._id,
-        urls: removedHomepageUrls,
-      });
+      const latestSettings = await mongoose
+        .model('HomepageSetting')
+        .findById(settings._id)
+        .lean();
 
-      console.log(
-        '[Homepage Settings] Deleted removed Drive media',
-        {
-          tab,
-          count: removedHomepageUrls.length,
-          urls: removedHomepageUrls,
-        }
+      const latestUrls = getHomepageMediaUrls(latestSettings);
+
+      const latestUrlSet = new Set(
+        latestUrls
+          .filter(Boolean)
+          .map(normalizeMediaUrl)
       );
+
+      const safeToDeleteUrls = removedHomepageUrls.filter(
+        (url) => !latestUrlSet.has(normalizeMediaUrl(url))
+      );
+
+      if (safeToDeleteUrls.length > 0) {
+        await deleteDriveFilesForUrls({
+          userId: req.user._id,
+          urls: safeToDeleteUrls,
+        });
+
+        console.log(
+          '[Homepage Settings] Deleted removed Drive media',
+          {
+            tab,
+            count: safeToDeleteUrls.length,
+            urls: safeToDeleteUrls,
+          }
+        );
+      }
     } catch (driveError) {
       console.error(
         '[Homepage Settings] Failed to delete removed Drive media:',
@@ -1518,7 +1537,6 @@ if (tab === 'videoReels' && Array.isArray(updates.videoReels)) {
       );
     }
   }
-
   const plainUpdated =
     typeof updated?.toObject === 'function'
       ? updated.toObject()
@@ -1530,8 +1548,6 @@ if (tab === 'videoReels' && Array.isArray(updates.videoReels)) {
     data: normalizeHomepageImageUrls(plainUpdated),
   });
 });
-
-
 const uploadHomepageMedia = asyncHandler(async (req, res) => {
   const uploadedFile =
     req.file ||
