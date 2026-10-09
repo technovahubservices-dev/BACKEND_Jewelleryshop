@@ -1453,6 +1453,25 @@ const updateHomepageTab = asyncHandler(async (req, res) => {
         }
       }
     }
+    // Include actual video files so removed reels are cleaned up in Google Drive.
+    if (Array.isArray(source.videoReels)) {
+      for (const reel of source.videoReels) {
+        if (!reel || typeof reel !== 'object') {
+          continue;
+        }
+
+        const videoUrl = reel.videoUrl;
+        const driveFileId =
+          getGoogleDriveFileId(videoUrl) ||
+          reel.videoMetadata?.driveFileId;
+
+        if (driveFileId) {
+          urls.push(buildProxyMediaUrl(driveFileId));
+        } else if (typeof videoUrl === 'string' && videoUrl.trim()) {
+          urls.push(videoUrl.trim());
+        }
+      }
+    }
 
     return urls;
   };

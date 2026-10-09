@@ -5,6 +5,7 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 const Category = require('../models/Category');
 const HomepageSetting = require('../models/HomepageSetting');
+const driveStorageMock = jest.requireMock('../utils/googleDriveStorage');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
@@ -453,6 +454,12 @@ describe('CMS Homepage Settings — Announcement, Hero, Category, Video, Festive
 
       expect(after.status).toBe(200);
       expect(after.body.data.videoReels).toHaveLength(0);
+
+      expect(driveStorageMock.deleteDriveFilesForUrls).toHaveBeenCalledWith(
+        expect.objectContaining({
+          urls: expect.arrayContaining(['https://example.com/legacy.mp4']),
+        })
+      );
     });
 
     it('should resolve product details in public API response', async () => {
