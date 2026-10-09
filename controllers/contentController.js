@@ -1,4 +1,4 @@
-const path = require('path');
+﻿const path = require('path');
 const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const {
@@ -1367,9 +1367,35 @@ const updateHomepageTab = asyncHandler(async (req, res) => {
     await validateCategoryReferences(updates.categories);
   }
 
-if (tab === 'videoReels' && Array.isArray(updates.videoReels)) {
-    await validateAndResolveVideoReelSkus(updates.videoReels);
+
+  if (tab === 'videoReels' && Array.isArray(updates.videoReels)) {
+    const existingReels = Array.isArray(settings.videoReels)
+      ? settings.videoReels
+      : [];
+
+    const reelsNeedingSkuValidation = updates.videoReels.filter((reel) => {
+      if (!reel || !reel.sku || typeof reel.sku !== 'string' || !reel.sku.trim()) {
+        return false;
+      }
+
+      const existingReel = existingReels.find(
+        (existing) =>
+          existing &&
+          reel._id &&
+          String(existing._id) === String(reel._id)
+      );
+
+      // Validate new reels and reels whose SKU has changed.
+      // Don't block deletion because an unchanged legacy SKU is invalid.
+      return (
+        !existingReel ||
+        String(existingReel.sku || '').trim() !== reel.sku.trim()
+      );
+    });
+
+    await validateAndResolveVideoReelSkus(reelsNeedingSkuValidation);
   }
+
 
   const safeUpdates = {};
 

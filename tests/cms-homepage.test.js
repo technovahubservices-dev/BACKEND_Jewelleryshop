@@ -391,7 +391,6 @@ describe('CMS Homepage Settings — Announcement, Hero, Category, Video, Festive
       const reel = res.body.data.videoReels[0];
       expect(reel.sku).toBe('VIDEO-SKU-001');
     });
-
     it('should reject video reel with invalid SKU', async () => {
       const res = await request(app)
         .post('/api/content/homepage/video-reels/upload')
@@ -414,6 +413,46 @@ describe('CMS Homepage Settings — Announcement, Hero, Category, Video, Festive
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
       expect(res.body.data.videoReels[0].title).toBe('No SKU Reel');
+    });
+    it('should delete a legacy video reel even when its SKU is invalid', async () => {
+      await HomepageSetting.create({
+        videoReels: [
+          {
+            title: 'Legacy Invalid SKU Reel',
+            videoUrl: 'https://example.com/legacy.mp4',
+            sku: 'GOLD-BNG-001',
+            sortOrder: 0,
+          },
+        ],
+      });
+
+      const before = await request(app)
+        .get('/api/content/homepage/settings');
+
+      const reel = before.body.data.videoReels.find(
+        (item) => item.sku === 'GOLD-BNG-001'
+      );
+
+      expect(reel).toBeTruthy();
+
+      const res = await request(app)
+        .put('/api/content/homepage/settings/updateTab')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          tab: 'videoReels',
+          payload: {
+            videoReels: [],
+          },
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.videoReels).toHaveLength(0);
+
+      const after = await request(app)
+        .get('/api/content/homepage/settings');
+
+      expect(after.status).toBe(200);
+      expect(after.body.data.videoReels).toHaveLength(0);
     });
 
     it('should resolve product details in public API response', async () => {
