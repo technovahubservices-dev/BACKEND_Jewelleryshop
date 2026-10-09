@@ -502,11 +502,11 @@ const updateHomepageSettings = asyncHandler(async (req, res) => {
   const settings = await mongoose.model('HomepageSetting').getSettings();
   const updates = normalizeHomepageImageUrls(req.body);
 
-  if (tab === 'categories' && Array.isArray(updates.categories)) {
+  if (Array.isArray(updates.categories)) {
     await validateCategoryReferences(updates.categories);
   }
 
-  if (tab === 'videoReels' && Array.isArray(updates.videoReels)) {
+  if (Array.isArray(updates.videoReels)) {
     await validateAndResolveVideoReelSkus(updates.videoReels);
   }
 
@@ -1496,7 +1496,7 @@ if (tab === 'videoReels' && Array.isArray(updates.videoReels)) {
    * Now delete only media that is no longer referenced
    * anywhere in the homepage settings.
    */
-  if (removedHomepageUrls.length > 0) {
+  if (tab !== 'hero' && removedHomepageUrls.length > 0) {
     try {
       const latestSettings = await mongoose
         .model('HomepageSetting')
