@@ -16,7 +16,7 @@ const {
 const { protect, admin, optionalProtect } = require('../middleware/authMiddleware');
 
 router.route('/')
-    .get(getProducts)
+    .get(optionalProtect, getProducts)
     .post(protect, admin, uploadImageMemory.array('images', 10), createProduct);
 
 router.get('/check-sku', checkSkuAvailability);

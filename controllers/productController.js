@@ -1,4 +1,4 @@
-﻿const Product = require('../models/Product');
+const Product = require('../models/Product');
 const User = require('../models/User');
 const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
@@ -625,8 +625,16 @@ exports.getProducts = async (req, res) => {
       query.diamondColor = String(diamondColor);
     }
 
-    if (status) {
-      query.status = String(status);
+    const isAdmin = Boolean(req.user && req.user.isAdmin);
+
+    if (!isAdmin) {
+      // Public visitors can only view active products.
+      query.status = 'active';
+    } else if (String(status || '').toLowerCase() === 'all') {
+      // Admins can view all product statuses.
+      // Do not add a status filter.
+    } else if (status) {
+      query.status = String(status).toLowerCase();
     } else {
       query.status = 'active';
     }
@@ -791,6 +799,14 @@ exports.getProduct = async (req, res) => {
     }
 
     const product = await Product.findById(req.params.id);
+
+    // Public visitors can only view active products.
+    if (product && (!req.user || !req.user.isAdmin) && product.status !== 'active') {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found',
+      });
+    }
 
     if (!product) {
       return res.status(404).json({
@@ -1120,6 +1136,7 @@ exports.deleteProduct = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
 
+
     if (!product) {
       return res.status(404).json({
         success: false,
@@ -1427,6 +1444,7 @@ exports.getRelatedProducts = asyncHandler(async (req, res) => {
     }
 
     const product = await Product.findById(req.params.id);
+
     if (!product) {
       return res.status(404).json({
         success: false,
@@ -1519,7 +1537,3 @@ exports.getRecentlyViewed = asyncHandler(async (req, res) => {
     });
   }
 });
-
-
-
-
