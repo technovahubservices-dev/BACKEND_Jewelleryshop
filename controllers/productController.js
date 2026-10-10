@@ -569,7 +569,8 @@ exports.getProducts = async (req, res) => {
       const trimmedCategory = String(category).trim();
       if (trimmedCategory) {
         const escaped = trimmedCategory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        query.category = { $regex: new RegExp(`^${escaped}$`, 'i') };
+        const flexibleSpacing = escaped.replace(/\s+/g, '\\s+');
+        query.category = { $regex: new RegExp(`^\\s*${flexibleSpacing}\\s*$`, 'i') };
       }
     }
 
