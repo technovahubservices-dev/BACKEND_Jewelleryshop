@@ -1,4 +1,4 @@
-const Product = require('../models/Product');
+﻿const Product = require('../models/Product');
 const User = require('../models/User');
 const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
@@ -1102,7 +1102,6 @@ exports.updateProduct = async (req, res) => {
     message: 'A duplicate product value already exists.',
   });
 }
-    }
     if (error.statusCode) {
       return res.status(error.statusCode).json({
         success: false,
@@ -1116,6 +1115,7 @@ exports.updateProduct = async (req, res) => {
   }
 
 
+};
 exports.deleteProduct = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
