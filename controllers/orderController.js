@@ -11,6 +11,13 @@ const ORDER_POPULATE = [
   { path: 'quotationId', select: 'quotationNumber status' },
 ];
 
+const normalizeStatusValue = (value) => {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  return String(value).trim().toLowerCase();
+};
+
 const buildOrderResponse = (order) => {
   const plain = typeof order?.toObject === 'function'
     ? order.toObject()
@@ -650,7 +657,9 @@ exports.convertQuotationToOrder = asyncHandler(async (req, res) => {
 
 exports.sendOrderStatusNotification = asyncHandler(async (req, res) => {
   const orderId = req.params.id;
-  const { status, note } = req.body;
+  const { note } = req.body;
+  const status = normalizeStatusValue(req.body.status);
+  const noteText = note !== undefined && note !== null ? String(note) : '';
 
   if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
     return res.status(400).json({
@@ -666,16 +675,10 @@ exports.sendOrderStatusNotification = asyncHandler(async (req, res) => {
     });
   }
 
-  const VALID_ORDER_STATUSES = [
-    'new', 'confirmed', 'payment_received', 'processing',
-    'manufacturing', 'quality_check', 'packed', 'shipped',
-    'delivered', 'cancelled', 'pending_payment',
-  ];
-
-  if (!VALID_ORDER_STATUSES.includes(status)) {
+  if (!Order.VALID_STATUSES.includes(status)) {
     return res.status(400).json({
       success: false,
-      message: 'Invalid status. Valid values: ' + VALID_ORDER_STATUSES.join(', '),
+      message: 'Invalid status. Valid values: ' + Order.VALID_STATUSES.join(', '),
     });
   }
 
@@ -688,31 +691,53 @@ exports.sendOrderStatusNotification = asyncHandler(async (req, res) => {
     });
   }
 
-  order.status = status;
-  order.statusHistory = order.statusHistory || [];
-  order.statusHistory.push({
-    status,
-    timestamp: new Date(),
-    note: note || '',
-    updatedBy: req.user._id,
-  });
+  const currentStatus = order.status || 'new';
+  const statusChanged = status !== currentStatus;
 
-  if (status === 'shipped') {
+  if (statusChanged && !Order.canTransitionStatus(currentStatus, status)) {
+    return res.status(400).json({
+      success: false,
+      message: `Invalid status transition from "${currentStatus}" to "${status}"`,
+    });
+  }
+
+  if (statusChanged) {
+    order.status = status;
+    order.statusHistory = order.statusHistory || [];
+    order.statusHistory.push({
+      status,
+      timestamp: new Date(),
+      note: noteText,
+      updatedBy: req.user._id,
+    });
+  } else if (noteText.trim()) {
+    order.statusHistory = order.statusHistory || [];
+    order.statusHistory.push({
+      status: currentStatus,
+      timestamp: new Date(),
+      note: noteText,
+      updatedBy: req.user._id,
+    });
+  }
+
+  if (statusChanged && status === 'shipped') {
     order.shippingStatus = 'shipped';
     order.shippedAt = new Date();
-  } else if (status === 'delivered') {
+  } else if (statusChanged && status === 'delivered') {
     order.shippingStatus = 'delivered';
     order.deliveredAt = new Date();
     order.isDelivered = true;
-  } else if (status === 'cancelled') {
+  } else if (statusChanged && status === 'cancelled') {
     order.shippingStatus = 'not_shipped';
   }
 
   await order.save();
 
-  sendOrderStatusNotificationEmail(order, status).catch((err) => {
-    console.error('[orderController] Failed to send status notification email:', err.message);
-  });
+  if (statusChanged) {
+    sendOrderStatusNotificationEmail(order, status).catch((err) => {
+      console.error('[orderController] Failed to send status notification email:', err.message);
+    });
+  }
 
   res.status(200).json({
     success: true,

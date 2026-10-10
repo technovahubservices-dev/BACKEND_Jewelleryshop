@@ -486,6 +486,21 @@ describe('Sprint 5: Admin Order Management', () => {
       expect(res.body.data.status).toBe('confirmed');
     });
 
+    it('should update order status from legacy orderStatus payload field', async () => {
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId, { status: 'new' });
+      const res = await request(app)
+        .put(`/api/admin/orders/${order._id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ orderStatus: 'confirmed' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.status).toBe('confirmed');
+
+      const updated = await Order.findById(order._id);
+      expect(updated.status).toBe('confirmed');
+    });
+
     it('should reject invalid status', async () => {
       const res = await request(app)
         .put(`/api/admin/orders/${orderId}`)
@@ -496,7 +511,7 @@ describe('Sprint 5: Admin Order Management', () => {
     });
 
     it('should auto-set shipping status when shipped', async () => {
-      const order = await createOrder(new mongoose.Types.ObjectId(), productId, { status: 'processing' });
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId, { status: 'packed' });
       const res = await request(app)
         .put(`/api/admin/orders/${order._id}`)
         .set('Authorization', `Bearer ${adminToken}`)
@@ -611,6 +626,57 @@ describe('Sprint 5: Admin Order Management', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.data.shippingStatus).toBe('ready_to_ship');
+    });
+
+    it('should update paymentStatus and persist it to database', async () => {
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId, {
+        status: 'confirmed',
+        paymentStatus: 'pending',
+      });
+      const res = await request(app)
+        .put(`/api/admin/orders/${order._id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ paymentStatus: 'paid' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.paymentStatus).toBe('paid');
+
+      const updated = await Order.findById(order._id);
+      expect(updated.paymentStatus).toBe('paid');
+    });
+
+    it('should reject invalid payment status', async () => {
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId, { status: 'new' });
+      const res = await request(app)
+        .put(`/api/admin/orders/${order._id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ paymentStatus: 'invalid_payment' });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should preserve note when updating payment or shipping status without order status', async () => {
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId, { status: 'confirmed' });
+      const res = await request(app)
+        .put(`/api/admin/orders/${order._id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          paymentStatus: 'paid',
+          shippingStatus: 'ready_to_ship',
+          note: 'Payment received and ready to ship',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.paymentStatus).toBe('paid');
+      expect(res.body.data.shippingStatus).toBe('ready_to_ship');
+
+      const updated = await Order.findById(order._id);
+      const lastHistory = updated.statusHistory[updated.statusHistory.length - 1];
+      expect(updated.paymentStatus).toBe('paid');
+      expect(updated.shippingStatus).toBe('ready_to_ship');
+      expect(lastHistory.status).toBe('confirmed');
+      expect(lastHistory.note).toBe('Payment received and ready to ship');
     });
 
     it('should reject invalid shipping status', async () => {
@@ -999,13 +1065,13 @@ describe('Sprint 5: Category Sales & Order Status', () => {
       const res = await request(app)
         .put(`/api/admin/orders/${order._id}`)
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ status: 'processing' });
+        .send({ status: 'confirmed' });
 
       expect(res.status).toBe(200);
-      expect(res.body.data.status).toBe('processing');
+      expect(res.body.data.status).toBe('confirmed');
 
       const persisted = await Order.findById(order._id);
-      expect(persisted.status).toBe('processing');
+      expect(persisted.status).toBe('confirmed');
     });
 
     it('should reject invalid status value', async () => {
@@ -1019,7 +1085,7 @@ describe('Sprint 5: Category Sales & Order Status', () => {
     });
 
     it('should sync shipping status when order is marked shipped', async () => {
-      const order = await createOrder(new mongoose.Types.ObjectId(), productId1, { status: 'processing' });
+      const order = await createOrder(new mongoose.Types.ObjectId(), productId1, { status: 'packed' });
       const res = await request(app)
         .put(`/api/admin/orders/${order._id}`)
         .set('Authorization', `Bearer ${adminToken}`)

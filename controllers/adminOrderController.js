@@ -14,6 +14,20 @@ const ORDER_POPULATE = [
   { path: 'quotationId', select: 'quotationNumber status' },
 ];
 
+const normalizeStatusValue = (value) => {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  return String(value).trim().toLowerCase();
+};
+
+const getSynchronizedShippingStatus = (status) => {
+  if (status === 'shipped') return 'shipped';
+  if (status === 'delivered') return 'delivered';
+  if (status === 'cancelled') return 'not_shipped';
+  return '';
+};
+
 const buildAdminOrderResponse = (order) => {
   const plain = typeof order?.toObject === 'function'
     ? order.toObject()
@@ -76,6 +90,7 @@ const buildAdminOrderResponse = (order) => {
     status: plain.status || 'new',
     paymentStatus: plain.paymentStatus || 'pending',
     shippingStatus: plain.shippingStatus || 'not_shipped',
+    trackingNumber: plain.trackingNumber || '',
     courier: plain.courier || '',
     shippedAt: plain.shippedAt,
     estimatedDeliveryDate: plain.estimatedDeliveryDate,
@@ -224,7 +239,20 @@ exports.adminGetOrder = asyncHandler(async (req, res) => {
 
 exports.adminUpdateOrderStatus = asyncHandler(async (req, res) => {
   const orderId = req.params.id;
-  const { status, note, courier, estimatedDeliveryDate, shippingStatus } = req.body;
+  const {
+    status: requestStatus,
+    orderStatus,
+    paymentStatus,
+    shippingStatus,
+    note,
+    trackingNumber,
+    courier,
+    estimatedDeliveryDate,
+  } = req.body;
+  const status = normalizeStatusValue(requestStatus || orderStatus);
+  const normalizedPaymentStatus = normalizeStatusValue(paymentStatus);
+  const normalizedShippingStatus = normalizeStatusValue(shippingStatus);
+  const noteText = note !== undefined && note !== null ? String(note) : '';
 
   if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
     return res.status(400).json({
@@ -242,6 +270,9 @@ exports.adminUpdateOrderStatus = asyncHandler(async (req, res) => {
     });
   }
 
+  const currentStatus = order.status || 'new';
+  const statusChanged = Boolean(status && status !== currentStatus);
+
   if (status && !Order.VALID_STATUSES.includes(status)) {
     return res.status(400).json({
       success: false,
@@ -249,23 +280,50 @@ exports.adminUpdateOrderStatus = asyncHandler(async (req, res) => {
     });
   }
 
-  if (shippingStatus && !Order.VALID_SHIPPING_STATUSES.includes(shippingStatus)) {
+  if (statusChanged && !Order.canTransitionStatus(currentStatus, status)) {
+    return res.status(400).json({
+      success: false,
+      message: `Invalid status transition from "${currentStatus}" to "${status}"`,
+    });
+  }
+
+  if (normalizedPaymentStatus && !Order.VALID_PAYMENT_STATUSES.includes(normalizedPaymentStatus)) {
+    return res.status(400).json({
+      success: false,
+      message: `Invalid payment status. Valid values: ${Order.VALID_PAYMENT_STATUSES.join(', ')}`,
+    });
+  }
+
+  if (normalizedShippingStatus && !Order.VALID_SHIPPING_STATUSES.includes(normalizedShippingStatus)) {
     return res.status(400).json({
       success: false,
       message: `Invalid shipping status. Valid values: ${Order.VALID_SHIPPING_STATUSES.join(', ')}`,
     });
   }
 
-  if (status) {
+  const currentStatusShipping = getSynchronizedShippingStatus(currentStatus);
+  if (!statusChanged && normalizedShippingStatus && currentStatusShipping && normalizedShippingStatus !== currentStatusShipping) {
+    return res.status(400).json({
+      success: false,
+      message: `Shipping status must remain "${currentStatusShipping}" when order status is "${currentStatus}"`,
+    });
+  }
+
+  if (statusChanged) {
     order.status = status;
+  }
+
+  if (statusChanged || noteText.trim()) {
     order.statusHistory = order.statusHistory || [];
     order.statusHistory.push({
-      status,
+      status: statusChanged ? status : currentStatus,
       timestamp: new Date(),
-      note: note || '',
+      note: noteText,
       updatedBy: req.user._id,
     });
+  }
 
+  if (statusChanged) {
     if (status === 'shipped') {
       order.shippingStatus = 'shipped';
       order.shippedAt = new Date();
@@ -278,6 +336,14 @@ exports.adminUpdateOrderStatus = asyncHandler(async (req, res) => {
     }
   }
 
+  if (normalizedPaymentStatus) {
+    order.paymentStatus = normalizedPaymentStatus;
+  }
+
+  if (trackingNumber !== undefined && trackingNumber !== null) {
+    order.trackingNumber = trackingNumber;
+  }
+
   if (courier !== undefined && courier !== null) {
     order.courier = courier;
   }
@@ -286,13 +352,14 @@ exports.adminUpdateOrderStatus = asyncHandler(async (req, res) => {
     order.estimatedDeliveryDate = new Date(estimatedDeliveryDate);
   }
 
-  if (shippingStatus) {
-    order.shippingStatus = shippingStatus;
+  const synchronizedShippingStatus = statusChanged ? getSynchronizedShippingStatus(status) : '';
+  if (!synchronizedShippingStatus && normalizedShippingStatus) {
+    order.shippingStatus = normalizedShippingStatus;
   }
 
   await order.save();
 
-  if (status) {
+  if (statusChanged) {
     sendOrderStatusNotificationEmail(order, status).catch((err) => {
       console.error('[adminOrderController] Failed to send status notification email:', err.message);
     });

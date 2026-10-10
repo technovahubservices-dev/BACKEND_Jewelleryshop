@@ -193,6 +193,20 @@ const STATUS_DISPLAY_NAMES = {
   cancelled: 'Cancelled',
 };
 
+const STATUS_TRANSITIONS = {
+  pending_payment: ['confirmed', 'cancelled'],
+  new: ['confirmed', 'cancelled'],
+  confirmed: ['payment_received', 'cancelled'],
+  payment_received: ['processing', 'cancelled'],
+  processing: ['manufacturing', 'cancelled'],
+  manufacturing: ['quality_check', 'cancelled'],
+  quality_check: ['packed', 'cancelled'],
+  packed: ['shipped', 'cancelled'],
+  shipped: ['delivered', 'cancelled'],
+  delivered: [],
+  cancelled: [],
+};
+
 orderSchema.statics.getStatusDisplayName = function (status) {
   return STATUS_DISPLAY_NAMES[status] || (status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown');
 };
@@ -205,5 +219,12 @@ orderSchema.statics.VALID_STATUSES = [
 
 orderSchema.statics.VALID_PAYMENT_STATUSES = ['pending', 'paid', 'failed', 'refunded', 'partially_refunded'];
 orderSchema.statics.VALID_SHIPPING_STATUSES = ['not_shipped', 'ready_to_ship', 'shipped', 'out_for_delivery', 'delivered'];
+orderSchema.statics.STATUS_TRANSITIONS = STATUS_TRANSITIONS;
+orderSchema.statics.canTransitionStatus = function (currentStatus, nextStatus) {
+  if (!nextStatus || currentStatus === nextStatus) {
+    return true;
+  }
+  return (STATUS_TRANSITIONS[currentStatus] || []).includes(nextStatus);
+};
 
 module.exports = mongoose.model('Order', orderSchema);
