@@ -47,7 +47,7 @@ const streamDriveFile = (req, res, driveResponse, mimeType, contentLength) => {
   if (contentLength) {
     res.setHeader('Content-Length', contentLength);
   }
-  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.setHeader('Cache-Control', 'public, max-age=604800');
   const driveStream = Readable.fromWeb(driveResponse.body);
 
   driveStream.on('error', (err) => {
@@ -85,23 +85,28 @@ const getDriveMedia = async (req, res, next) => {
       downloadDriveFileStream,
     } = require('../utils/googleDriveStorage');
 
+    const requestedType = req.query.type;
     let mimeType = req.query.mime;
-    let isVideo = false;
+    let isVideo = requestedType === 'video';
 
-    try {
-      const metadata = await getDriveFileMetadata(adminUserId, fileId);
-      mimeType = metadata.mimeType || mimeType;
-      if (metadata.mimeType && metadata.mimeType.startsWith('video/')) {
-        isVideo = true;
+    if (requestedType !== 'image') {
+      try {
+        const metadata = await getDriveFileMetadata(adminUserId, fileId);
+        mimeType = metadata.mimeType || mimeType;
+
+        if (metadata.mimeType && metadata.mimeType.startsWith('video/')) {
+          isVideo = true;
+        }
+      } catch (metaErr) {
+        if (metaErr.code !== 'DRIVE_FILE_NOT_FOUND' && metaErr.code !== 404) {
+          console.error('Failed to fetch Drive metadata:', metaErr.message);
+        }
       }
-    } catch (metaErr) {
-      if (metaErr.code !== 'DRIVE_FILE_NOT_FOUND' && metaErr.code !== 404) {
-        console.error('Failed to fetch Drive metadata:', metaErr.message);
-      }
+    } else {
+      mimeType = mimeType || 'image/jpeg';
     }
 
     mimeType = getMimeType(mimeType, isVideo);
-
     const driveStream = await downloadDriveFileStream(adminUserId, fileId);
 
     if (!mimeType) {
@@ -148,4 +153,7 @@ const getDriveMedia = async (req, res, next) => {
 };
 
 module.exports = { getDriveMedia };
+
+
+
 
