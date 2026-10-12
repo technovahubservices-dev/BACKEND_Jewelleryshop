@@ -84,7 +84,7 @@ accessoryProductSchema.index({ name: 1 });
 accessoryProductSchema.index({ category: 1, status: 1 });
 accessoryProductSchema.index({ slug: 1 });
 
-accessoryProductSchema.pre('save', async function (next) {
+accessoryProductSchema.pre('save', async function normalizeAccessoryProduct(next) {
   try {
     if (!this.slug && this.name) {
       const baseSlug = this.name

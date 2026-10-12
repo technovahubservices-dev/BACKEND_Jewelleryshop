@@ -1,10 +1,10 @@
 const Order = require('../models/Order');
-const Product = require('../models/Product');
 const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const { sendOrderConfirmationEmail, sendOrderStatusNotificationEmail } = require('../services/mailer');
+const { deductStockForOrder, restoreStockForOrder } = require('../utils/orderProductResolver');
 
 let razorpay = null;
 
@@ -159,14 +159,20 @@ const verifyPayment = asyncHandler(async (req, res) => {
     });
   }
 
+  let stockDeductedNow = false;
+  if (!order.stockDeducted) {
+    await deductStockForOrder(order);
+    order.stockDeducted = true;
+    stockDeductedNow = true;
+  }
+
+  const previousStatus = order.statusHistory?.[order.statusHistory.length - 1]?.status || 'new';
   order.paymentGatewayPaymentId = paymentId;
   order.paymentGatewaySignature = signature;
   order.isPaid = true;
   order.paidAt = new Date();
   order.paymentStatus = 'paid';
   order.status = 'confirmed';
-
-  const previousStatus = order.statusHistory?.[order.statusHistory.length - 1]?.status || 'new';
   order.statusHistory = order.statusHistory || [];
   order.statusHistory.push({
     status: 'payment_received',
@@ -175,9 +181,15 @@ const verifyPayment = asyncHandler(async (req, res) => {
     updatedBy: req.user ? req.user._id : undefined,
   });
 
-  await order.save();
-
-  await deductStockForOrder(order);
+  try {
+    await order.save();
+  } catch (error) {
+    if (stockDeductedNow) {
+      await restoreStockForOrder(order);
+      order.stockDeducted = false;
+    }
+    throw error;
+  }
 
   const populatedOrder = await Order.populate(order, [
     { path: 'items.product' },
@@ -347,9 +359,21 @@ const handleWebhook = asyncHandler(async (req, res) => {
         note: 'Payment captured via webhook',
         updatedBy: order.user,
       });
-      await order.save();
-
-      await deductStockForOrder(order);
+      let stockDeductedNow = false;
+      if (!order.stockDeducted) {
+        await deductStockForOrder(order);
+        order.stockDeducted = true;
+        stockDeductedNow = true;
+      }
+      try {
+        await order.save();
+      } catch (error) {
+        if (stockDeductedNow) {
+          await restoreStockForOrder(order);
+          order.stockDeducted = false;
+        }
+        throw error;
+      }
 
       const populatedOrder = await Order.populate(order, [
         { path: 'items.product' },
@@ -390,18 +414,6 @@ const handleWebhook = asyncHandler(async (req, res) => {
 
   res.status(200).json({ success: true });
 });
-
-const deductStockForOrder = async (order) => {
-  for (const item of order.items) {
-    if (item.product && mongoose.Types.ObjectId.isValid(item.product)) {
-      const product = await Product.findById(item.product);
-      if (product) {
-        product.stock = Math.max(0, product.stock - item.quantity);
-        await product.save();
-      }
-    }
-  }
-};
 
 module.exports = {
   createPaymentOrder,

@@ -3,8 +3,18 @@ const mongoose = require('mongoose');
 const orderItemSchema = mongoose.Schema({
   product: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Product',
+    refPath: 'productModel',
     required: true,
+  },
+  productType: {
+    type: String,
+    enum: ['jewellery', 'accessory'],
+    default: 'jewellery',
+  },
+  productModel: {
+    type: String,
+    enum: ['Product', 'AccessoryProduct'],
+    default: 'Product',
   },
   name: { type: String, required: true },
   image: { type: String },
@@ -141,6 +151,10 @@ const orderSchema = mongoose.Schema(
       default: 0,
       min: 0,
       max: 3,
+    },
+    stockDeducted: {
+      type: Boolean,
+      default: false,
     },
   },
   {

@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const { streamInvoiceToResponse } = require('../services/invoiceService');
 const { sendOrderStatusNotificationEmail } = require('../services/mailer');
+const { restoreStockForOrder } = require('../utils/orderProductResolver');
 
 const ORDER_POPULATE = [
   { path: 'user', select: 'name email phone' },
@@ -46,6 +47,7 @@ const buildAdminOrderResponse = (order) => {
 
     return {
       product: item.product,
+      productType: item.productType || 'jewellery',
       name: item.name || (product && product.name) || '',
       image: item.image || primaryImage || '',
       images,
@@ -333,6 +335,10 @@ exports.adminUpdateOrderStatus = asyncHandler(async (req, res) => {
       order.isDelivered = true;
     } else if (status === 'cancelled') {
       order.shippingStatus = 'not_shipped';
+      if (order.stockDeducted) {
+        await restoreStockForOrder(order);
+        order.stockDeducted = false;
+      }
     }
   }
 

@@ -4,6 +4,11 @@ const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const { streamInvoiceToResponse } = require('../services/invoiceService');
 const { sendOrderConfirmationEmail, sendOrderStatusNotificationEmail } = require('../services/mailer');
+const {
+  buildOrderItems,
+  deductStockForOrderItems,
+  restoreStockForOrder,
+} = require('../utils/orderProductResolver');
 
 const ORDER_POPULATE = [
   { path: 'user', select: 'name email phone' },
@@ -39,6 +44,7 @@ const buildOrderResponse = (order) => {
 
     return {
       product: item.product,
+      productType: item.productType || 'jewellery',
       name: item.name,
       image: item.image,
       sku: item.sku || (product && product.sku) || '',
@@ -121,51 +127,7 @@ exports.createOrder = asyncHandler(async (req, res) => {
     });
   }
 
-  const orderItems = [];
-  let calculatedItemsPrice = 0;
-
-  for (const item of items) {
-    if (!item.product || !mongoose.Types.ObjectId.isValid(item.product)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid product ID format: ${item.product}`,
-      });
-    }
-
-    const product = await Product.findById(item.product);
-    if (!product) {
-      return res.status(400).json({
-        success: false,
-        message: `Product not found: ${item.product}`,
-      });
-    }
-
-    if (product.stock < item.quantity) {
-      return res.status(400).json({
-        success: false,
-        message: `Insufficient stock for ${product.name}. Available: ${product.stock}, Requested: ${item.quantity}`,
-      });
-    }
-
-    const price = product.discountPrice && product.discountPrice > 0
-      ? product.discountPrice
-      : product.price;
-
-    const lineTotal = price * item.quantity;
-    calculatedItemsPrice += lineTotal;
-
-    orderItems.push({
-      product: product._id,
-      name: item.name || product.name,
-      image: item.image || product.primaryImage || (product.images && product.images[0] && (typeof product.images[0] === 'string' ? product.images[0] : product.images[0].url)) || '',
-      sku: product.sku || '',
-      price: price,
-      quantity: item.quantity,
-      discount: item.discount || 0,
-      gst: item.gst !== undefined ? item.gst : 18,
-      lineTotal,
-    });
-  }
+  const { orderItems, calculatedItemsPrice } = await buildOrderItems(items);
 
   const userId = req.user && mongoose.Types.ObjectId.isValid(req.user._id)
     ? req.user._id
@@ -174,60 +136,63 @@ exports.createOrder = asyncHandler(async (req, res) => {
   const isPrepaid = paymentMethod && paymentMethod !== 'cod';
   const calculatedTotalPrice = calculatedItemsPrice + (Number(taxPrice) || 0) + (Number(shippingPrice) || 0) - (Number(discount) || 0);
 
-  const order = await Order.create({
-    user: userId,
-    items: orderItems,
-    shippingAddress: {
-      fullName: shippingAddress.fullName,
-      phone: shippingAddress.phone || '',
-      address: shippingAddress.address,
-      landmark: shippingAddress.landmark || '',
-      city: shippingAddress.city,
-      state: shippingAddress.state,
-      pincode: shippingAddress.pincode || '',
-    },
-    billingAddress: shippingAddress.billingAddress
-      ? {
-          fullName: shippingAddress.billingAddress.fullName,
-          phone: shippingAddress.billingAddress.phone || '',
-          address: shippingAddress.billingAddress.address,
-          landmark: shippingAddress.billingAddress.landmark || '',
-          city: shippingAddress.billingAddress.city,
-          state: shippingAddress.billingAddress.state,
-          pincode: shippingAddress.billingAddress.pincode || '',
-        }
-      : undefined,
-    paymentMethod: paymentMethod || 'cod',
-    itemsPrice: calculatedItemsPrice,
-    taxPrice: Number(taxPrice) || 0,
-    shippingPrice: Number(shippingPrice) || 0,
-    discount: Number(discount) || 0,
-    totalPrice: calculatedTotalPrice,
-    isPaid: false,
-    status: isPrepaid ? 'pending_payment' : 'new',
-    paymentStatus: 'pending',
-    shippingStatus: 'not_shipped',
-    idempotencyKey: idempotencyKey || undefined,
-    statusHistory: [
-      {
-        status: isPrepaid ? 'pending_payment' : 'new',
-        timestamp: new Date(),
-        note: isPrepaid ? 'Order awaiting payment' : 'Order placed',
-        updatedBy: userId,
-      },
-    ],
-  });
-
+  let stockDeducted = false;
   if (!isPrepaid) {
-    for (const item of orderItems) {
-      if (item.product && mongoose.Types.ObjectId.isValid(item.product)) {
-        await Product.findByIdAndUpdate(
-          item.product,
-          { $inc: { stock: -item.quantity } },
-          { new: true }
-        );
-      }
+    await deductStockForOrderItems(orderItems);
+    stockDeducted = true;
+  }
+
+  let order;
+  try {
+    order = await Order.create({
+      user: userId,
+      items: orderItems,
+      shippingAddress: {
+        fullName: shippingAddress.fullName,
+        phone: shippingAddress.phone || '',
+        address: shippingAddress.address,
+        landmark: shippingAddress.landmark || '',
+        city: shippingAddress.city,
+        state: shippingAddress.state,
+        pincode: shippingAddress.pincode || '',
+      },
+      billingAddress: shippingAddress.billingAddress
+        ? {
+            fullName: shippingAddress.billingAddress.fullName,
+            phone: shippingAddress.billingAddress.phone || '',
+            address: shippingAddress.billingAddress.address,
+            landmark: shippingAddress.billingAddress.landmark || '',
+            city: shippingAddress.billingAddress.city,
+            state: shippingAddress.billingAddress.state,
+            pincode: shippingAddress.billingAddress.pincode || '',
+          }
+        : undefined,
+      paymentMethod: paymentMethod || 'cod',
+      itemsPrice: calculatedItemsPrice,
+      taxPrice: Number(taxPrice) || 0,
+      shippingPrice: Number(shippingPrice) || 0,
+      discount: Number(discount) || 0,
+      totalPrice: calculatedTotalPrice,
+      isPaid: false,
+      status: isPrepaid ? 'pending_payment' : 'new',
+      paymentStatus: 'pending',
+      shippingStatus: 'not_shipped',
+      idempotencyKey: idempotencyKey || undefined,
+      stockDeducted,
+      statusHistory: [
+        {
+          status: isPrepaid ? 'pending_payment' : 'new',
+          timestamp: new Date(),
+          note: isPrepaid ? 'Order awaiting payment' : 'Order placed',
+          updatedBy: userId,
+        },
+      ],
+    });
+  } catch (error) {
+    if (stockDeducted) {
+      await restoreStockForOrder({ items: orderItems });
     }
+    throw error;
   }
 
   await Order.populate(order, ORDER_POPULATE);
@@ -729,6 +694,10 @@ exports.sendOrderStatusNotification = asyncHandler(async (req, res) => {
     order.isDelivered = true;
   } else if (statusChanged && status === 'cancelled') {
     order.shippingStatus = 'not_shipped';
+    if (order.stockDeducted) {
+      await restoreStockForOrder(order);
+      order.stockDeducted = false;
+    }
   }
 
   await order.save();
