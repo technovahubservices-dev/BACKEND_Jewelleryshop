@@ -6,6 +6,7 @@ const { streamInvoiceToResponse } = require('../services/invoiceService');
 const { sendOrderConfirmationEmail, sendOrderStatusNotificationEmail } = require('../services/mailer');
 const {
   buildOrderItems,
+  DEFAULT_STOREFRONT_GST_PERCENT,
   deductStockForOrderItems,
   restoreStockForOrder,
 } = require('../utils/orderProductResolver');
@@ -33,7 +34,9 @@ const buildOrderResponse = (order) => {
     const qty = Number(item.quantity) || 0;
     const price = Number(item.price) || 0;
     const discountPercent = Number(item.discount) || 0;
-    const gstPercent = Number(item.gst) || 18;
+    const gstPercent = item.gst !== undefined && item.gst !== null
+      ? Number(item.gst) || 0
+      : DEFAULT_STOREFRONT_GST_PERCENT;
     const gross = price * qty;
     const discountAmount = gross * (discountPercent / 100);
     const taxableValue = Math.max(0, gross - discountAmount);
@@ -99,7 +102,7 @@ const sendOrderEmailSafe = async (order) => {
 };
 
 exports.createOrder = asyncHandler(async (req, res) => {
-  const { items, shippingAddress, paymentMethod, itemsPrice, taxPrice, shippingPrice, totalPrice, discount, idempotencyKey } = req.body;
+  const { items, shippingAddress, paymentMethod, shippingPrice, discount, idempotencyKey } = req.body;
 
   if (idempotencyKey) {
     const existingOrder = await Order.findOne({ idempotencyKey });
@@ -134,7 +137,12 @@ exports.createOrder = asyncHandler(async (req, res) => {
     : undefined;
 
   const isPrepaid = paymentMethod && paymentMethod !== 'cod';
-  const calculatedTotalPrice = calculatedItemsPrice + (Number(taxPrice) || 0) + (Number(shippingPrice) || 0) - (Number(discount) || 0);
+  const shippingAmount = Number(shippingPrice) || 0;
+  const discountAmount = Number(discount) || 0;
+  const taxableItemsPrice = Math.max(0, calculatedItemsPrice - discountAmount);
+  const taxRate = DEFAULT_STOREFRONT_GST_PERCENT / 100;
+  const calculatedTaxPrice = Number((taxableItemsPrice * taxRate).toFixed(2));
+  const calculatedTotalPrice = taxableItemsPrice + calculatedTaxPrice + shippingAmount;
 
   let stockDeducted = false;
   if (!isPrepaid) {
@@ -169,9 +177,9 @@ exports.createOrder = asyncHandler(async (req, res) => {
         : undefined,
       paymentMethod: paymentMethod || 'cod',
       itemsPrice: calculatedItemsPrice,
-      taxPrice: Number(taxPrice) || 0,
-      shippingPrice: Number(shippingPrice) || 0,
-      discount: Number(discount) || 0,
+      taxPrice: calculatedTaxPrice,
+      shippingPrice: shippingAmount,
+      discount: discountAmount,
       totalPrice: calculatedTotalPrice,
       isPaid: false,
       status: isPrepaid ? 'pending_payment' : 'new',

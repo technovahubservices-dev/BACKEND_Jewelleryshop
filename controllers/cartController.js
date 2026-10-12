@@ -5,6 +5,7 @@ const User = require('../models/User');
 const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const { sendOrderConfirmationEmail } = require('../services/mailer');
+const { DEFAULT_STOREFRONT_GST_PERCENT } = require('../utils/orderProductResolver');
 
 const getProductPrice = (product) => {
   if (product.discountPrice && product.discountPrice > 0) {
@@ -94,7 +95,7 @@ const buildOrderItems = async (items) => {
       price: price,
       quantity: item.quantity,
       discount: 0,
-      gst: 0,
+      gst: DEFAULT_STOREFRONT_GST_PERCENT,
       lineTotal,
     });
   }
@@ -111,7 +112,7 @@ const createOrderFromItems = async (req, items, addressInput, idempotencyKey) =>
     throw error;
   }
 
-  const { shippingAddress, billingAddress, shippingPrice = 0, taxPrice = 0, discount = 0, paymentMethod = 'cod' } = addressInput;
+  const { shippingAddress, billingAddress, shippingPrice = 0, discount = 0, paymentMethod = 'cod' } = addressInput;
 
   const resolvedAddress = await resolveShippingAddress(
     req,
@@ -120,8 +121,12 @@ const createOrderFromItems = async (req, items, addressInput, idempotencyKey) =>
   );
 
   const isPrepaid = paymentMethod && paymentMethod !== 'cod';
+  const shippingAmount = Number(shippingPrice || 0);
+  const discountAmount = Number(discount || 0);
+  const taxableItemsPrice = Math.max(0, calculatedItemsPrice - discountAmount);
+  const calculatedTaxPrice = Number((taxableItemsPrice * (DEFAULT_STOREFRONT_GST_PERCENT / 100)).toFixed(2));
   const calculatedTotalPrice =
-    calculatedItemsPrice + Number(taxPrice || 0) + Number(shippingPrice || 0) - Number(discount || 0);
+    taxableItemsPrice + calculatedTaxPrice + shippingAmount;
 
   const userId = req.user && mongoose.Types.ObjectId.isValid(req.user._id)
     ? req.user._id
@@ -134,9 +139,9 @@ const createOrderFromItems = async (req, items, addressInput, idempotencyKey) =>
     billingAddress: billingAddress || undefined,
     paymentMethod: paymentMethod || 'cod',
     itemsPrice: calculatedItemsPrice,
-    taxPrice: Number(taxPrice || 0),
-    shippingPrice: Number(shippingPrice || 0),
-    discount: Number(discount || 0),
+    taxPrice: calculatedTaxPrice,
+    shippingPrice: shippingAmount,
+    discount: discountAmount,
     totalPrice: calculatedTotalPrice,
     isPaid: false,
     status: isPrepaid ? 'pending_payment' : 'new',

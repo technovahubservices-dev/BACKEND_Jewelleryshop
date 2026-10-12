@@ -3,6 +3,7 @@ const Product = require('../models/Product');
 const AccessoryProduct = require('../models/AccessoryProduct');
 
 const ACCESSORY_ID_PREFIX = 'accessory:';
+const DEFAULT_STOREFRONT_GST_PERCENT = 5;
 
 const normalizeObjectIdString = (value) => {
   if (value && typeof value === 'object' && value._id) {
@@ -66,7 +67,8 @@ const getModelForOrderItem = (item) => {
   return modelName === 'AccessoryProduct' ? AccessoryProduct : Product;
 };
 
-const resolveOrderItemProduct = async (item) => {
+const resolveOrderItemProduct = async (item, options = {}) => {
+  const defaultGstPercent = options.defaultGstPercent ?? DEFAULT_STOREFRONT_GST_PERCENT;
   const parsed = parseOrderProductIdentifier(item.product);
   const Model = parsed.productModel === 'AccessoryProduct' ? AccessoryProduct : Product;
   const product = await Model.findById(parsed.id);
@@ -96,6 +98,9 @@ const resolveOrderItemProduct = async (item) => {
 
   const price = getProductPrice(product, parsed.productType);
   const lineTotal = price * quantity;
+  const gstPercent = item.gst !== undefined && item.gst !== null && item.gst !== ''
+    ? Number(item.gst) || 0
+    : defaultGstPercent;
 
   return {
     orderItem: {
@@ -108,19 +113,19 @@ const resolveOrderItemProduct = async (item) => {
       price,
       quantity,
       discount: Number(item.discount) || 0,
-      gst: item.gst !== undefined ? Number(item.gst) || 0 : 18,
+      gst: gstPercent,
       lineTotal,
     },
     lineTotal,
   };
 };
 
-const buildOrderItems = async (items) => {
+const buildOrderItems = async (items, options = {}) => {
   const orderItems = [];
   let calculatedItemsPrice = 0;
 
   for (const item of items) {
-    const resolved = await resolveOrderItemProduct(item);
+    const resolved = await resolveOrderItemProduct(item, options);
     orderItems.push(resolved.orderItem);
     calculatedItemsPrice += resolved.lineTotal;
   }
@@ -167,6 +172,7 @@ const restoreStockForOrder = (order) => restoreStockForOrderItems(order.items ||
 
 module.exports = {
   ACCESSORY_ID_PREFIX,
+  DEFAULT_STOREFRONT_GST_PERCENT,
   buildOrderItems,
   deductStockForOrder,
   deductStockForOrderItems,

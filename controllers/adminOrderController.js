@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const { streamInvoiceToResponse } = require('../services/invoiceService');
 const { sendOrderStatusNotificationEmail } = require('../services/mailer');
-const { restoreStockForOrder } = require('../utils/orderProductResolver');
+const { DEFAULT_STOREFRONT_GST_PERCENT, restoreStockForOrder } = require('../utils/orderProductResolver');
 
 const ORDER_POPULATE = [
   { path: 'user', select: 'name email phone' },
@@ -55,7 +55,9 @@ const buildAdminOrderResponse = (order) => {
       price: Number(item.price) || 0,
       quantity: Number(item.quantity) || 0,
       discount: Number(item.discount) || 0,
-      gst: Number(item.gst) || 18,
+      gst: item.gst !== undefined && item.gst !== null
+        ? Number(item.gst) || 0
+        : DEFAULT_STOREFRONT_GST_PERCENT,
       lineTotal: Number(item.lineTotal) || 0,
     };
   });

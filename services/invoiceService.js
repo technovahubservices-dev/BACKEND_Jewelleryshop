@@ -30,8 +30,13 @@ const getLineTotal = (item) => {
   return price * qty;
 };
 
+const roundMoney = (amount) => {
+  const num = Number(amount) || 0;
+  return Math.round(num * 100) / 100;
+};
+
 const computeSubtotal = (items) => {
-  return items.reduce((sum, item) => sum + getLineTotal(item), 0);
+  return items.reduce((sum, item) => sum + ((Number(item.price) || 0) * (Number(item.quantity) || 0)), 0);
 };
 
 const fetchImageBuffer = (url, timeout = 5000) => {
@@ -548,19 +553,35 @@ const buildInvoiceData = async (order) => {
     logoBuffer = await fetchImageBuffer(logoUrl);
   }
 
-  const items = (plainOrder.items || []).map((item) => {
+  const savedSubtotal = Number(plainOrder.itemsPrice) || 0;
+  const savedDiscount = Number(plainOrder.discount) || 0;
+  const savedTax = Number(plainOrder.taxPrice) || 0;
+  const savedShipping = Number(plainOrder.shippingPrice) || 0;
+  const savedGrandTotal = Number(plainOrder.totalPrice) || 0;
+  const taxableOrderValue = Math.max(0, savedSubtotal - savedDiscount);
+  const effectiveOrderGstPercent = taxableOrderValue > 0
+    ? roundMoney((savedTax / taxableOrderValue) * 100)
+    : 0;
+
+  let computedGstTotal = 0;
+
+  const rawItems = plainOrder.items || [];
+  const items = rawItems.map((item) => {
     const qty = Number(item.quantity) || 0;
     const price = Number(item.price) || 0;
     const discountPercent = Number(item.discount) || 0;
-    const gstPercent = Number(item.gst) || 0;
+    const itemGstPercent = item.gst !== undefined && item.gst !== null
+      ? Number(item.gst) || 0
+      : effectiveOrderGstPercent;
 
     const gross = price * qty;
     const discountAmount = gross * (discountPercent / 100);
     const taxableValue = Math.max(0, gross - discountAmount);
-    const gstAmount = taxableValue * (gstPercent / 100);
+    const gstAmount = taxableValue * (itemGstPercent / 100);
+    computedGstTotal += gstAmount;
     const lineTotal = Number.isFinite(Number(item.lineTotal))
       ? Number(item.lineTotal)
-      : (taxableValue + gstAmount);
+      : taxableValue;
 
     const product = typeof item.product === 'object' && item.product ? item.product : {};
 
@@ -570,20 +591,29 @@ const buildInvoiceData = async (order) => {
       image: item.image || product.primaryImage || '',
       quantity: qty,
       unitPrice: price,
+      gross,
       discountPercent,
       discountAmount,
       taxableValue,
-      gstPercent,
+      gstPercent: itemGstPercent,
       gstAmount,
       lineTotal,
     };
   });
 
-  const subtotal = items.reduce((sum, i) => sum + i.gross, 0);
-  const totalDiscount = items.reduce((sum, i) => sum + i.discountAmount, 0);
-  const totalGst = items.reduce((sum, i) => sum + i.gstAmount, 0);
-  const shippingCharges = Number(plainOrder.shippingPrice) || 0;
-  const grandTotal = Number(plainOrder.totalPrice) || 0;
+  const recomputedSubtotal = computeSubtotal(rawItems);
+  const subtotal = savedSubtotal || recomputedSubtotal;
+  const totalDiscount = savedDiscount || items.reduce((sum, i) => sum + i.discountAmount, 0);
+  const totalGst = savedTax || computedGstTotal;
+  const shippingCharges = savedShipping;
+  const grandTotal = savedGrandTotal || (Math.max(0, subtotal - totalDiscount) + totalGst + shippingCharges);
+
+  if (items.length > 0 && Math.abs(computedGstTotal - totalGst) > 0.5) {
+    items.forEach((item) => {
+      item.gstPercent = effectiveOrderGstPercent;
+      item.gstAmount = item.taxableValue * (effectiveOrderGstPercent / 100);
+    });
+  }
 
   const billing = plainOrder.billingAddress || plainOrder.shippingAddress || {};
   const shipping = plainOrder.shippingAddress || {};
