@@ -1,5 +1,6 @@
 const Quotation = require('../models/Quotation');
 const QuotationCounter = require('../models/QuotationCounter');
+const { computeProductPrices } = require('../utils/discountCalculator');
 const Product = require('../models/Product');
 const asyncHandler = require('express-async-handler');
 
@@ -105,9 +106,7 @@ const resolveQuotationItemSkus = async (items) => {
       item.productName = product.name;
     }
     if (item.price === 0) {
-      item.price = product.discountPrice > 0 && product.discountPrice < product.price
-        ? product.discountPrice
-        : product.price;
+      item.price = computeProductPrices(product).sellingPrice;
     }
   }
 
@@ -211,7 +210,7 @@ exports.createQuotation = asyncHandler(async (req, res) => {
   // render a fully-resolved preview without a second round-trip.
   const populated = await Quotation.findById(quotation._id).populate(
     'items.product',
-    'name sku metal purity weight price discountPrice images primaryImage'
+    'name sku metal purity weight price discountPrice discountPercent images primaryImage'
   );
 
   res.status(201).json({
@@ -245,7 +244,7 @@ exports.getAllQuotations = asyncHandler(async (req, res) => {
   const quotations = await Quotation.find(query)
     .sort({ createdAt: -1 })
     .populate(    'items.product',
-    'name sku metal purity weight price discountPrice images primaryImage');
+    'name sku metal purity weight price discountPrice discountPercent images primaryImage');
 
   res.status(200).json({
     success: true,
@@ -271,7 +270,7 @@ exports.getQuotationById = asyncHandler(async (req, res) => {
 
   const quotation = await Quotation.findById(req.params.id).populate(
     'items.product',
-    'name sku metal purity weight price discountPrice images primaryImage'
+    'name sku metal purity weight price discountPrice discountPercent images primaryImage'
   );
 
   if (!quotation) {
@@ -357,7 +356,7 @@ exports.updateQuotation = asyncHandler(async (req, res) => {
 
   const populated = await Quotation.findById(quotation._id).populate(
     'items.product',
-    'name sku metal purity weight price discountPrice images primaryImage'
+    'name sku metal purity weight price discountPrice discountPercent images primaryImage'
   );
 
   res.status(200).json({

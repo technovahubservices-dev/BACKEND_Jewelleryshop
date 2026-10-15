@@ -40,6 +40,13 @@ const productSchema = mongoose.Schema(
         message: 'Discount price must be less than the regular price',
       },
     },
+    // Percentage discount for new and migrated products. Undefined means the
+    // product still uses the legacy fixed-amount `discountPrice` field.
+    discountPercent: {
+      type: Number,
+      min: [0, 'Discount percentage cannot be less than 0'],
+      max: [100, 'Discount percentage cannot exceed 100'],
+    },
     stock: {
       type: Number,
       min: [0, 'Stock cannot be negative'],

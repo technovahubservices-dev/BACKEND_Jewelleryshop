@@ -20,6 +20,50 @@ const VALID_OCCASIONS = [
   'Festive', 'Everyday', 'Anniversary', 'Gift',
 ];
 
+const hasValidDiscountPercentExpression = {
+  $and: [
+    { $gte: [{ $ifNull: ['$discountPercent', -1] }, 0] },
+    { $lte: [{ $ifNull: ['$discountPercent', -1] }, 100] },
+  ],
+};
+
+const hasValidLegacyDiscountExpression = {
+  $and: [
+    { $gt: ['$price', 0] },
+    { $gt: ['$discountPrice', 0] },
+    { $lt: ['$discountPrice', '$price'] },
+  ],
+};
+
+const effectiveProductPriceExpression = () => ({
+  $cond: [
+    hasValidDiscountPercentExpression,
+    { $multiply: ['$price', { $divide: [{ $subtract: [100, '$discountPercent'] }, 100] }] },
+    {
+      $cond: [hasValidLegacyDiscountExpression, '$discountPrice', '$price'],
+    },
+  ],
+});
+
+const effectiveDiscountPercentExpression = () => ({
+  $cond: [
+    hasValidDiscountPercentExpression,
+    '$discountPercent',
+    {
+      $cond: [
+        hasValidLegacyDiscountExpression,
+        {
+          $multiply: [
+            { $divide: [{ $subtract: ['$price', '$discountPrice'] }, '$price'] },
+            100,
+          ],
+        },
+        0,
+      ],
+    },
+  ],
+});
+
 const normalizeImage = (img, index) => {
   if (typeof img === 'string') {
     return {
@@ -192,6 +236,7 @@ exports.createProduct = async (req, res) => {
       description,
       price,
       discountPrice,
+      discountPercent,
       stock,
       category,
       subcategory,
@@ -245,6 +290,9 @@ exports.createProduct = async (req, res) => {
   }
 
   const parsedPrice = price !== undefined && price !== '' && price !== null ? Number(price) : null;
+  const parsedDiscountPercent = discountPercent !== undefined && discountPercent !== null
+    ? (discountPercent === '' ? 0 : Number(discountPercent))
+    : null;
   const parsedDiscount = discountPrice !== undefined && discountPrice !== '' && discountPrice !== null
     ? Number(discountPrice)
     : null;
@@ -256,7 +304,22 @@ exports.createProduct = async (req, res) => {
     });
   }
 
-  if (parsedDiscount !== null) {
+  if (parsedDiscountPercent !== null
+    && (!Number.isFinite(parsedDiscountPercent) || parsedDiscountPercent < 0 || parsedDiscountPercent > 100)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Discount percentage must be a number between 0 and 100',
+    });
+  }
+
+  if (parsedDiscountPercent > 0 && (!Number.isFinite(parsedPrice) || parsedPrice <= 0)) {
+    return res.status(400).json({
+      success: false,
+      message: 'A positive original price is required to apply a percentage discount',
+    });
+  }
+
+  if (parsedDiscountPercent === null && parsedDiscount !== null) {
     if (!Number.isFinite(parsedDiscount) || parsedDiscount < 0) {
       return res.status(400).json({
         success: false,
@@ -395,7 +458,12 @@ if (!sku) {
     };
 
     if (price !== undefined && price !== '') productData.price = parseFloat(price);
-    if (discountPrice !== undefined && discountPrice !== '') productData.discountPrice = parseFloat(discountPrice);
+    if (parsedDiscountPercent !== null) {
+      productData.discountPercent = parsedDiscountPercent;
+      productData.discountPrice = 0;
+    } else if (discountPrice !== undefined && discountPrice !== '') {
+      productData.discountPrice = parseFloat(discountPrice);
+    }
     if (stock !== undefined && stock !== '') productData.stock = parseInt(stock, 10);
     if (subcategory) productData.subcategory = subcategory;
     if (jewelleryCollection) productData.jewelleryCollection = jewelleryCollection;
@@ -645,10 +713,7 @@ exports.getProducts = async (req, res) => {
       if (!isNaN(min)) {
         query.$and = query.$and || [];
         query.$and.push({
-          $or: [
-            { discountPrice: { $gt: 0, $gte: min } },
-            { discountPrice: { $lte: 0 }, price: { $gte: min } },
-          ],
+          $expr: { $gte: [effectiveProductPriceExpression(), min] },
         });
       }
     }
@@ -658,10 +723,7 @@ exports.getProducts = async (req, res) => {
       if (!isNaN(max)) {
         query.$and = query.$and || [];
         query.$and.push({
-          $or: [
-            { discountPrice: { $gt: 0, $lte: max } },
-            { discountPrice: { $lte: 0 }, price: { $lte: max } },
-          ],
+          $expr: { $lte: [effectiveProductPriceExpression(), max] },
         });
       }
     }
@@ -690,13 +752,16 @@ exports.getProducts = async (req, res) => {
     }
 
     if (discount === 'true' || discount === true) {
-      query.discountPrice = { $gt: 0 };
+      query.$and = query.$and || [];
+      query.$and.push({ $expr: { $gt: [effectiveDiscountPercentExpression(), 0] } });
     } else if (discount && String(discount).toLowerCase() !== 'all') {
       const discountVal = String(discount).toLowerCase();
       if (discountVal === 'onsale') {
-        query.discountPrice = { $gt: 0 };
+        query.$and = query.$and || [];
+        query.$and.push({ $expr: { $gt: [effectiveDiscountPercentExpression(), 0] } });
       } else if (discountVal === 'none') {
-        query.discountPrice = { $lte: 0 };
+        query.$and = query.$and || [];
+        query.$and.push({ $expr: { $eq: [effectiveDiscountPercentExpression(), 0] } });
       } else {
         const discountThresholds = {
           '10+': 10,
@@ -708,23 +773,10 @@ exports.getProducts = async (req, res) => {
         };
         const threshold = discountThresholds[discountVal];
         if (threshold) {
-          query.discountPrice = { $gt: 0 };
-          query.$expr = {
-            $gte: [
-              {
-                $multiply: [
-                  {
-                    $divide: [
-                      { $subtract: ['$price', '$discountPrice'] },
-                      '$price',
-                    ],
-                  },
-                  100,
-                ],
-              },
-              threshold,
-            ],
-          };
+          query.$and = query.$and || [];
+          query.$and.push({
+            $expr: { $gte: [effectiveDiscountPercentExpression(), threshold] },
+          });
         }
       }
     }
@@ -885,6 +937,7 @@ exports.updateProduct = async (req, res) => {
       description,
       price,
       discountPrice,
+      discountPercent,
       stock,
       category,
       subcategory,
@@ -947,6 +1000,9 @@ exports.updateProduct = async (req, res) => {
     }
 
     const priceNum = price !== undefined && price !== '' && price !== null ? Number(price) : null;
+    const discountPercentNum = discountPercent !== undefined && discountPercent !== null
+      ? (discountPercent === '' ? 0 : Number(discountPercent))
+      : null;
     const discountPriceNum = discountPrice !== undefined && discountPrice !== '' && discountPrice !== null
       ? Number(discountPrice)
       : null;
@@ -959,15 +1015,33 @@ exports.updateProduct = async (req, res) => {
       });
     }
 
-    if (discountPriceNum !== null && (!Number.isFinite(discountPriceNum) || discountPriceNum < 0)) {
+    if (discountPercentNum === null
+      && discountPriceNum !== null
+      && (!Number.isFinite(discountPriceNum) || discountPriceNum < 0)) {
       return res.status(400).json({
         success: false,
         message: 'Discount price must be a valid non-negative number',
       });
     }
 
+    if (discountPercentNum !== null
+      && (!Number.isFinite(discountPercentNum) || discountPercentNum < 0 || discountPercentNum > 100)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Discount percentage must be a number between 0 and 100',
+      });
+    }
+
+    if (discountPercentNum > 0 && (!Number.isFinite(effectivePrice) || effectivePrice <= 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'A positive original price is required to apply a percentage discount',
+      });
+    }
+
     const effectiveDiscountPrice = discountPriceNum !== null ? discountPriceNum : Number(product.discountPrice) || 0;
-    if ((priceNum !== null || discountPriceNum !== null)
+    if (discountPercentNum === null
+      && (priceNum !== null || discountPriceNum !== null)
       && effectiveDiscountPrice > 0
       && effectiveDiscountPrice >= effectivePrice) {
       return res.status(400).json({
@@ -1032,7 +1106,10 @@ exports.updateProduct = async (req, res) => {
     }
     if (description !== undefined && description !== null) product.description = description;
     if (price !== undefined && price !== '' && price !== null) product.price = parseFloat(price);
-    if (discountPrice !== undefined && discountPrice !== '' && discountPrice !== null) {
+    if (discountPercentNum !== null) {
+      product.discountPercent = discountPercentNum;
+      product.discountPrice = 0;
+    } else if (discountPrice !== undefined && discountPrice !== '' && discountPrice !== null) {
       product.discountPrice = parseFloat(discountPrice);
     } else if (discountPrice === '' || discountPrice === null) {
       product.discountPrice = 0;

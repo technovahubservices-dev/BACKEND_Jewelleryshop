@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 
 const WISHLIST_PRODUCT_FIELDS =
-  'name price discountPrice primaryImage images stock status category';
+  'name price discountPrice discountPercent primaryImage images stock status category';
 
 exports.getWishlist = asyncHandler(async (req, res) => {
   let wishlist = await Wishlist.findOne({ user: req.user._id }).populate(

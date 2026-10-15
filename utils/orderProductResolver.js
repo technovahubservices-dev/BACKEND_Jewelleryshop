@@ -4,6 +4,7 @@ const AccessoryProduct = require('../models/AccessoryProduct');
 
 const ACCESSORY_ID_PREFIX = 'accessory:';
 const DEFAULT_STOREFRONT_GST_PERCENT = 5;
+const { computeProductPrices } = require('./discountCalculator');
 
 const normalizeObjectIdString = (value) => {
   if (value && typeof value === 'object' && value._id) {
@@ -47,15 +48,8 @@ const parseOrderProductIdentifier = (value) => {
 };
 
 const getProductPrice = (product, productType) => {
-  const regularPrice = Number(product?.price) || 0;
-  const discountPrice = Number(product?.discountPrice);
-  if (productType === 'jewellery'
-    && Number.isFinite(discountPrice)
-    && discountPrice > 0
-    && discountPrice < regularPrice) {
-    return discountPrice;
-  }
-  return regularPrice;
+  if (productType === 'jewellery') return computeProductPrices(product).sellingPrice;
+  return Number(product?.price) || 0;
 };
 
 const getProductImage = (product) => {

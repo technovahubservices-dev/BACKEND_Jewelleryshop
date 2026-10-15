@@ -211,7 +211,7 @@ const getActive = (modelKey) => asyncHandler(async (req, res) => {
   const items = await Model.find(query)
     .populate(
       modelKey === 'featuredProducts'
-        ? { path: 'product', select: 'name sku price discountPrice primaryImage images category jewelleryCollection occasion' }
+        ? { path: 'product', select: 'name sku price discountPrice discountPercent primaryImage images category jewelleryCollection occasion' }
         : ''
     )
     .sort('sortOrder createdAt')

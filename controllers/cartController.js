@@ -5,6 +5,7 @@ const User = require('../models/User');
 const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const { sendOrderConfirmationEmail } = require('../services/mailer');
+const { computeProductPrices } = require('../utils/discountCalculator');
 const {
   DEFAULT_STOREFRONT_GST_PERCENT,
   deductStockForOrderItems,
@@ -12,11 +13,7 @@ const {
 } = require('../utils/orderProductResolver');
 
 const getProductPrice = (product) => {
-  const regularPrice = Number(product?.price) || 0;
-  const discountPrice = Number(product?.discountPrice);
-  return Number.isFinite(discountPrice) && discountPrice > 0 && discountPrice < regularPrice
-    ? discountPrice
-    : regularPrice;
+  return computeProductPrices(product).sellingPrice;
 };
 
 const resolveShippingAddress = async (req, shippingAddress, addressId) => {
@@ -200,7 +197,7 @@ const createOrderFromItems = async (req, items, addressInput, idempotencyKey) =>
 exports.getCart = asyncHandler(async (req, res) => {
   let cart = await Cart.findOne({ user: req.user._id }).populate(
     'items.product',
-    'name price discountPrice primaryImage images stock status'
+    'name price discountPrice discountPercent primaryImage images stock status'
   );
 
   if (!cart) {
@@ -313,7 +310,7 @@ exports.addToCart = asyncHandler(async (req, res) => {
   }
 
   await cart.save();
-  await cart.populate('items.product', 'name price discountPrice primaryImage images stock status');
+  await cart.populate('items.product', 'name price discountPrice discountPercent primaryImage images stock status');
 
   const normalizedItems = cart.items.map((item) => {
     const productObj = item.product?.toObject
@@ -403,7 +400,7 @@ exports.updateCartItem = asyncHandler(async (req, res) => {
   cart.items[itemIndex].price = price;
   await cart.save();
 
-  await cart.populate('items.product', 'name price discountPrice primaryImage images stock status');
+  await cart.populate('items.product', 'name price discountPrice discountPercent primaryImage images stock status');
 
   const normalizedItems = cart.items.map((item) => {
     const productObj = item.product?.toObject
@@ -465,7 +462,7 @@ exports.removeFromCart = asyncHandler(async (req, res) => {
   cart.items.splice(itemIndex, 1);
   await cart.save();
 
-  await cart.populate('items.product', 'name price discountPrice primaryImage images stock status');
+  await cart.populate('items.product', 'name price discountPrice discountPercent primaryImage images stock status');
 
   const normalizedItems = cart.items.map((item) => {
     const productObj = item.product?.toObject
