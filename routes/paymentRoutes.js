@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   createPaymentOrder,
+  getPaymentStatus,
   verifyPayment,
   retryPayment,
   handleWebhook,
@@ -10,6 +11,9 @@ const { protect, admin } = require('../middleware/authMiddleware');
 
 router.route('/create-payment-order')
   .post(protect, createPaymentOrder);
+
+router.route('/status/:id')
+  .get(protect, getPaymentStatus);
 
 router.route('/verify-payment')
   .post(protect, verifyPayment);

@@ -75,22 +75,57 @@ const createPaymentOrder = asyncHandler(async (req, res) => {
     order.paymentGateway === gateway &&
     order.paymentMethod === paymentMethod
   ) {
-    return res.status(200).json({
-      success: true,
-      data: {
-        gatewayOrderId: order.paymentGatewayOrderId,
-        amount: Math.round(order.totalPrice * 100),
-        currency: 'INR',
-        key: process.env.RAZORPAY_KEY_ID,
-        prefill: {
-          name: req.user.name || '',
-          email: req.user.email || '',
-          contact: req.user.phone || '',
-        },
-        orderId: order._id.toString(),
-        paymentMethod,
-      },
-    });
+    try {
+      const providerPayments = await getRazorpayInstance().orders.fetchPayments(order.paymentGatewayOrderId);
+      const payments = providerPayments.items || [];
+      const activePayment = payments.find((payment) => ['created', 'authorized', 'captured'].includes(payment.status));
+
+      if (activePayment) {
+        return res.status(409).json({
+          success: false,
+          code: 'PAYMENT_STILL_PENDING',
+          message: 'The existing payment is still being processed. Please check its status before retrying.',
+        });
+      }
+
+      if (payments.length === 0) {
+        return res.status(200).json({
+          success: true,
+          data: {
+            gatewayOrderId: order.paymentGatewayOrderId,
+            amount: Math.round(order.totalPrice * 100),
+            currency: 'INR',
+            key: process.env.RAZORPAY_KEY_ID,
+            prefill: {
+              name: req.user.name || '',
+              email: req.user.email || '',
+              contact: req.user.phone || '',
+            },
+            orderId: order._id.toString(),
+            paymentMethod,
+          },
+        });
+      }
+
+      if (payments.length && payments.every((payment) => payment.status === 'failed')) {
+        order.paymentStatus = 'failed';
+        order.paymentFailureReason = payments[payments.length - 1].error_description || 'Payment failed';
+        await order.save();
+      } else {
+        return res.status(409).json({
+          success: false,
+          code: 'PAYMENT_STATUS_UNKNOWN',
+          message: 'Payment status could not be confirmed. Please check again before retrying.',
+        });
+      }
+    } catch (error) {
+      console.error('Payment status lookup error:', error);
+      return res.status(503).json({
+        success: false,
+        code: 'PAYMENT_STATUS_UNKNOWN',
+        message: 'Payment status could not be confirmed. Please check again before retrying.',
+      });
+    }
   }
 
   try {
@@ -139,6 +174,69 @@ const createPaymentOrder = asyncHandler(async (req, res) => {
       message: error.message === 'Razorpay credentials are not configured'
         ? 'Payment gateway is not configured'
         : 'Failed to create payment order',
+    });
+  }
+});
+
+const getPaymentStatus = asyncHandler(async (req, res) => {
+  const { id: orderId } = req.params;
+
+  if (!mongoose.Types.ObjectId.isValid(orderId)) {
+    return res.status(400).json({ success: false, message: 'Invalid order ID' });
+  }
+
+  const order = await Order.findById(orderId);
+  if (!order) {
+    return res.status(404).json({ success: false, message: 'Order not found' });
+  }
+
+  if (order.user && order.user.toString() !== req.user._id.toString() && !req.user.isAdmin) {
+    return res.status(403).json({ success: false, message: 'Not authorized to check payment for this order' });
+  }
+
+  if (order.isPaid || order.paymentStatus === 'paid') {
+    return res.status(200).json({ success: true, data: { paymentStatus: 'paid', orderId: order._id.toString() } });
+  }
+
+  if (!order.paymentGatewayOrderId) {
+    return res.status(200).json({ success: true, data: { paymentStatus: 'not_started', orderId: order._id.toString() } });
+  }
+
+  try {
+    const providerPayments = await getRazorpayInstance().orders.fetchPayments(order.paymentGatewayOrderId);
+    const payments = providerPayments.items || [];
+    const activePayment = payments.find((payment) => ['created', 'authorized', 'captured'].includes(payment.status));
+
+    if (activePayment) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          paymentStatus: 'pending',
+          gatewayStatus: activePayment.status,
+          orderId: order._id.toString(),
+        },
+      });
+    }
+
+    if (payments.length && payments.every((payment) => payment.status === 'failed')) {
+      order.paymentStatus = 'failed';
+      order.paymentFailureReason = payments[payments.length - 1].error_description || 'Payment failed';
+      await order.save();
+      return res.status(200).json({ success: true, data: { paymentStatus: 'failed', orderId: order._id.toString() } });
+    }
+
+    if (payments.length === 0) {
+      return res.status(200).json({ success: true, data: { paymentStatus: 'not_started', orderId: order._id.toString() } });
+    }
+
+    return res.status(200).json({ success: true, data: { paymentStatus: 'unknown', orderId: order._id.toString() } });
+  } catch (error) {
+    console.error('Payment status lookup error:', error);
+    return res.status(503).json({
+      success: false,
+      code: 'PAYMENT_STATUS_UNKNOWN',
+      message: 'Payment status could not be confirmed. Please check again before retrying.',
+      data: { paymentStatus: 'unknown', orderId: order._id.toString() },
     });
   }
 });
@@ -289,6 +387,35 @@ const retryPayment = asyncHandler(async (req, res) => {
       success: false,
       message: 'Maximum payment retries exceeded',
     });
+  }
+
+  if (order.paymentGatewayOrderId) {
+    try {
+      const providerPayments = await getRazorpayInstance().orders.fetchPayments(order.paymentGatewayOrderId);
+      const payments = providerPayments.items || [];
+      const activePayment = payments.find((payment) => ['created', 'authorized', 'captured'].includes(payment.status));
+      if (activePayment) {
+        return res.status(409).json({
+          success: false,
+          code: 'PAYMENT_STILL_PENDING',
+          message: 'The existing payment is still being processed. Please check its status before retrying.',
+        });
+      }
+      if (payments.length && !payments.every((payment) => payment.status === 'failed')) {
+        return res.status(409).json({
+          success: false,
+          code: 'PAYMENT_STATUS_UNKNOWN',
+          message: 'Payment status could not be confirmed. Please check again before retrying.',
+        });
+      }
+    } catch (error) {
+      console.error('Payment retry status lookup error:', error);
+      return res.status(503).json({
+        success: false,
+        code: 'PAYMENT_STATUS_UNKNOWN',
+        message: 'Payment status could not be confirmed. Please check again before retrying.',
+      });
+    }
   }
 
   const validMethods = ['upi', 'card', 'net_banking'];
@@ -471,6 +598,7 @@ const handleWebhook = asyncHandler(async (req, res) => {
 
 module.exports = {
   createPaymentOrder,
+  getPaymentStatus,
   verifyPayment,
   retryPayment,
   handleWebhook,
