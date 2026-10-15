@@ -90,9 +90,10 @@ const resolveOrderItemProduct = async (item, options = {}) => {
     throw createHttpError(`Invalid quantity for ${product.name}`);
   }
 
-  if (Number(product.stock) < quantity) {
+  const availableStock = Number(product.stock);
+  if (!Number.isSafeInteger(availableStock) || availableStock < quantity) {
     throw createHttpError(
-      `Insufficient stock for ${product.name}. Available: ${product.stock}, Requested: ${quantity}`
+      `Insufficient stock for ${product.name}. Available: ${Number.isFinite(availableStock) ? availableStock : 0}, Requested: ${quantity}`
     );
   }
 
@@ -156,7 +157,9 @@ const updateStockForOrderItems = async (items, direction) => {
       if (direction < 0 && applied.length > 0) {
         await updateStockForOrderItems(applied, 1);
       }
-      throw createHttpError(`Unable to update stock for ${item.name || 'order item'}`);
+      throw createHttpError(direction < 0
+        ? `Insufficient stock for ${item.name || 'order item'}. Please refresh the product and try again.`
+        : `Unable to restore stock for ${item.name || 'order item'}`);
     }
 
     applied.push(item);

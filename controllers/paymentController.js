@@ -5,7 +5,11 @@ const asyncHandler = require('express-async-handler');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const { sendOrderConfirmationEmail, sendOrderStatusNotificationEmail } = require('../services/mailer');
-const { deductStockForOrder, restoreStockForOrder } = require('../utils/orderProductResolver');
+const {
+  buildOrderItems,
+  deductStockForOrder,
+  restoreStockForOrder,
+} = require('../utils/orderProductResolver');
 
 let razorpay = null;
 
@@ -20,6 +24,56 @@ const getRazorpayInstance = () => {
     });
   }
   return razorpay;
+};
+
+const deductOrderStockOnce = async (order) => {
+  if (order.stockDeducted) return false;
+
+  const claimedOrder = await Order.findOneAndUpdate(
+    {
+      _id: order._id,
+      stockDeducted: { $ne: true },
+      stockDeductionInProgress: { $ne: true },
+    },
+    { $set: { stockDeductionInProgress: true } },
+    { new: true }
+  );
+
+  if (!claimedOrder) {
+    const latestOrder = await Order.findById(order._id).select('stockDeducted stockDeductionInProgress');
+    if (latestOrder?.stockDeducted) {
+      order.stockDeducted = true;
+      return false;
+    }
+    const error = new Error('Inventory confirmation is already in progress. Please retry shortly.');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  let inventoryApplied = false;
+  try {
+    await deductStockForOrder(claimedOrder);
+    inventoryApplied = true;
+    const updateResult = await Order.updateOne(
+      { _id: order._id, stockDeductionInProgress: true },
+      { $set: { stockDeducted: true, stockDeductionInProgress: false } }
+    );
+    const modifiedCount = updateResult.modifiedCount !== undefined
+      ? updateResult.modifiedCount
+      : updateResult.nModified;
+    if (modifiedCount !== 1) {
+      throw new Error('Unable to save payment inventory status');
+    }
+    order.stockDeducted = true;
+    return true;
+  } catch (error) {
+    if (inventoryApplied) await restoreStockForOrder(claimedOrder);
+    await Order.updateOne(
+      { _id: order._id, stockDeductionInProgress: true },
+      { $set: { stockDeductionInProgress: false, stockDeducted: false } }
+    );
+    throw error;
+  }
 };
 
 const createPaymentOrder = asyncHandler(async (req, res) => {
@@ -51,6 +105,16 @@ const createPaymentOrder = asyncHandler(async (req, res) => {
     return res.status(400).json({
       success: false,
       message: 'Order is already paid',
+    });
+  }
+
+  try {
+    // Inventory may have changed after the prepaid order was created.
+    await buildOrderItems(order.items || []);
+  } catch (error) {
+    return res.status(error.statusCode || 400).json({
+      success: false,
+      message: error.message || 'Unable to confirm product availability',
     });
   }
 
@@ -292,12 +356,7 @@ const verifyPayment = asyncHandler(async (req, res) => {
     });
   }
 
-  let stockDeductedNow = false;
-  if (!order.stockDeducted) {
-    await deductStockForOrder(order);
-    order.stockDeducted = true;
-    stockDeductedNow = true;
-  }
+  const stockDeductedNow = await deductOrderStockOnce(order);
 
   const previousStatus = order.statusHistory?.[order.statusHistory.length - 1]?.status || 'new';
   order.paymentGatewayPaymentId = paymentId;
@@ -317,9 +376,13 @@ const verifyPayment = asyncHandler(async (req, res) => {
   try {
     await order.save();
   } catch (error) {
-    if (stockDeductedNow) {
+    const savedOrder = await Order.findById(order._id).select('isPaid');
+    if (stockDeductedNow && !savedOrder?.isPaid) {
       await restoreStockForOrder(order);
       order.stockDeducted = false;
+      await Order.updateOne({ _id: order._id, isPaid: { $ne: true } }, {
+        $set: { stockDeducted: false },
+      });
     }
     throw error;
   }
@@ -528,18 +591,17 @@ const handleWebhook = asyncHandler(async (req, res) => {
         note: 'Payment captured via webhook',
         updatedBy: order.user,
       });
-      let stockDeductedNow = false;
-      if (!order.stockDeducted) {
-        await deductStockForOrder(order);
-        order.stockDeducted = true;
-        stockDeductedNow = true;
-      }
+      const stockDeductedNow = await deductOrderStockOnce(order);
       try {
         await order.save();
       } catch (error) {
-        if (stockDeductedNow) {
+        const savedOrder = await Order.findById(order._id).select('isPaid');
+        if (stockDeductedNow && !savedOrder?.isPaid) {
           await restoreStockForOrder(order);
           order.stockDeducted = false;
+          await Order.updateOne({ _id: order._id, isPaid: { $ne: true } }, {
+            $set: { stockDeducted: false },
+          });
         }
         throw error;
       }

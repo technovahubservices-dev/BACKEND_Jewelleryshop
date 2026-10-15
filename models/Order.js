@@ -156,6 +156,10 @@ const orderSchema = mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    stockDeductionInProgress: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true,

@@ -5,7 +5,11 @@ const User = require('../models/User');
 const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const { sendOrderConfirmationEmail } = require('../services/mailer');
-const { DEFAULT_STOREFRONT_GST_PERCENT } = require('../utils/orderProductResolver');
+const {
+  DEFAULT_STOREFRONT_GST_PERCENT,
+  deductStockForOrderItems,
+  restoreStockForOrderItems,
+} = require('../utils/orderProductResolver');
 
 const getProductPrice = (product) => {
   if (product.discountPrice && product.discountPrice > 0) {
@@ -75,16 +79,23 @@ const buildOrderItems = async (items) => {
       throw error;
     }
 
-    if (product.stock < item.quantity) {
+    const quantity = Number(item.quantity);
+    const availableStock = Number(product.stock);
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      const error = new Error(`Invalid quantity for ${product.name}`);
+      error.statusCode = 400;
+      throw error;
+    }
+    if (!Number.isSafeInteger(availableStock) || availableStock < quantity) {
       const error = new Error(
-        `Insufficient stock for ${product.name}. Available: ${product.stock}, Requested: ${item.quantity}`
+        `Insufficient stock for ${product.name}. Available: ${Number.isFinite(availableStock) ? availableStock : 0}, Requested: ${quantity}`
       );
       error.statusCode = 400;
       throw error;
     }
 
     const price = getProductPrice(product);
-    const lineTotal = price * item.quantity;
+    const lineTotal = price * quantity;
     calculatedItemsPrice += lineTotal;
 
     orderItems.push({
@@ -93,7 +104,7 @@ const buildOrderItems = async (items) => {
       image: item.image || item.product?.primaryImage || (product.images && product.images[0] && (typeof product.images[0] === 'string' ? product.images[0] : product.images[0].url)) || '',
       sku: product.sku || '',
       price: price,
-      quantity: item.quantity,
+      quantity,
       discount: 0,
       gst: DEFAULT_STOREFRONT_GST_PERCENT,
       lineTotal,
@@ -132,7 +143,15 @@ const createOrderFromItems = async (req, items, addressInput, idempotencyKey) =>
     ? req.user._id
     : undefined;
 
-  const order = await Order.create({
+  let stockDeducted = false;
+  if (!isPrepaid) {
+    await deductStockForOrderItems(orderItems);
+    stockDeducted = true;
+  }
+
+  let order;
+  try {
+    order = await Order.create({
     user: userId,
     items: orderItems,
     shippingAddress: resolvedAddress,
@@ -147,6 +166,7 @@ const createOrderFromItems = async (req, items, addressInput, idempotencyKey) =>
     status: isPrepaid ? 'pending_payment' : 'new',
     paymentStatus: 'pending',
     shippingStatus: 'not_shipped',
+    stockDeducted,
     idempotencyKey: idempotencyKey || undefined,
     statusHistory: [
       {
@@ -156,18 +176,10 @@ const createOrderFromItems = async (req, items, addressInput, idempotencyKey) =>
         updatedBy: userId,
       },
     ],
-  });
-
-  if (!isPrepaid) {
-    for (const item of orderItems) {
-      if (item.product && mongoose.Types.ObjectId.isValid(item.product)) {
-        await Product.findByIdAndUpdate(
-          item.product,
-          { $inc: { stock: -item.quantity } },
-          { new: true }
-        );
-      }
-    }
+    });
+  } catch (error) {
+    if (stockDeducted) await restoreStockForOrderItems(orderItems);
+    throw error;
   }
 
   await Order.populate(order, [
@@ -257,12 +269,16 @@ exports.addToCart = asyncHandler(async (req, res) => {
     });
   }
 
-  const qty = Math.max(1, parseInt(quantity, 10) || 1);
+  const qty = Number(quantity);
+  if (!Number.isSafeInteger(qty) || qty < 1) {
+    return res.status(400).json({ success: false, message: 'Quantity must be a positive whole number' });
+  }
 
-  if (product.stock < qty) {
+  const availableStock = Number(product.stock);
+  if (!Number.isSafeInteger(availableStock) || availableStock < qty) {
     return res.status(400).json({
       success: false,
-      message: `Insufficient stock. Available: ${product.stock}`,
+      message: `Insufficient stock. Available: ${Number.isFinite(availableStock) ? availableStock : 0}`,
     });
   }
 
@@ -279,10 +295,10 @@ exports.addToCart = asyncHandler(async (req, res) => {
 
   if (existingItemIndex > -1) {
     const newQuantity = cart.items[existingItemIndex].quantity + qty;
-    if (product.stock < newQuantity) {
+    if (!Number.isSafeInteger(availableStock) || availableStock < newQuantity) {
       return res.status(400).json({
         success: false,
-        message: `Insufficient stock. Available: ${product.stock}, Already in cart: ${cart.items[existingItemIndex].quantity}, Requested: ${qty}`,
+        message: `Insufficient stock. Available: ${Number.isFinite(availableStock) ? availableStock : 0}, Already in cart: ${cart.items[existingItemIndex].quantity}, Requested: ${qty}`,
       });
     }
     cart.items[existingItemIndex].quantity = newQuantity;
@@ -337,14 +353,14 @@ exports.updateCartItem = asyncHandler(async (req, res) => {
     });
   }
 
-  if (!quantity || quantity < 1) {
+  if (!Number.isSafeInteger(Number(quantity)) || Number(quantity) < 1) {
     return res.status(400).json({
       success: false,
       message: 'Quantity must be at least 1',
     });
   }
 
-  const qty = parseInt(quantity, 10);
+  const qty = Number(quantity);
 
   const cart = await Cart.findOne({ user: req.user._id });
   if (!cart || cart.items.length === 0) {
@@ -373,10 +389,11 @@ exports.updateCartItem = asyncHandler(async (req, res) => {
     });
   }
 
-  if (product.stock < qty) {
+  const availableStock = Number(product.stock);
+  if (!Number.isSafeInteger(availableStock) || availableStock < qty) {
     return res.status(400).json({
       success: false,
-      message: `Insufficient stock. Available: ${product.stock}`,
+      message: `Insufficient stock. Available: ${Number.isFinite(availableStock) ? availableStock : 0}`,
     });
   }
 
@@ -540,12 +557,16 @@ exports.buyNow = asyncHandler(async (req, res) => {
     });
   }
 
-  const qty = Math.max(1, parseInt(quantity, 10) || 1);
+  const qty = Number(quantity);
+  if (!Number.isSafeInteger(qty) || qty < 1) {
+    return res.status(400).json({ success: false, message: 'Quantity must be a positive whole number' });
+  }
 
-  if (product.stock < qty) {
+  const availableStock = Number(product.stock);
+  if (!Number.isSafeInteger(availableStock) || availableStock < qty) {
     return res.status(400).json({
       success: false,
-      message: `Insufficient stock. Available: ${product.stock}`,
+      message: `Insufficient stock. Available: ${Number.isFinite(availableStock) ? availableStock : 0}`,
     });
   }
 
