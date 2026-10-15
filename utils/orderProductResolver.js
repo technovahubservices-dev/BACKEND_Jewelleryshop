@@ -47,10 +47,15 @@ const parseOrderProductIdentifier = (value) => {
 };
 
 const getProductPrice = (product, productType) => {
-  if (productType === 'jewellery' && product.discountPrice && product.discountPrice > 0) {
-    return Number(product.discountPrice) || 0;
+  const regularPrice = Number(product?.price) || 0;
+  const discountPrice = Number(product?.discountPrice);
+  if (productType === 'jewellery'
+    && Number.isFinite(discountPrice)
+    && discountPrice > 0
+    && discountPrice < regularPrice) {
+    return discountPrice;
   }
-  return Number(product.price) || 0;
+  return regularPrice;
 };
 
 const getProductImage = (product) => {

@@ -105,7 +105,9 @@ const resolveQuotationItemSkus = async (items) => {
       item.productName = product.name;
     }
     if (item.price === 0) {
-      item.price = product.discountPrice > 0 ? product.discountPrice : product.price;
+      item.price = product.discountPrice > 0 && product.discountPrice < product.price
+        ? product.discountPrice
+        : product.price;
     }
   }
 

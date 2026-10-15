@@ -244,29 +244,29 @@ exports.createProduct = async (req, res) => {
     });
   }
 
-  if (discountPrice !== undefined && discountPrice !== '' && discountPrice !== null) {
-    const parsedDiscount = parseFloat(discountPrice);
-    const parsedPrice = price !== undefined && price !== '' ? parseFloat(price) : 0;
-    if (!isNaN(parsedDiscount) && parsedDiscount < 0) {
+  const parsedPrice = price !== undefined && price !== '' && price !== null ? Number(price) : null;
+  const parsedDiscount = discountPrice !== undefined && discountPrice !== '' && discountPrice !== null
+    ? Number(discountPrice)
+    : null;
+
+  if (parsedPrice !== null && (!Number.isFinite(parsedPrice) || parsedPrice < 0)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Price must be a valid non-negative number',
+    });
+  }
+
+  if (parsedDiscount !== null) {
+    if (!Number.isFinite(parsedDiscount) || parsedDiscount < 0) {
       return res.status(400).json({
         success: false,
-        message: 'Discount price cannot be negative',
+        message: 'Discount price must be a valid non-negative number',
       });
     }
-    if (!isNaN(parsedDiscount) && !isNaN(parsedPrice) && parsedDiscount >= parsedPrice) {
+    if (parsedDiscount > 0 && (parsedPrice === null || parsedDiscount >= parsedPrice)) {
       return res.status(400).json({
         success: false,
         message: 'Discount price must be less than the regular price',
-      });
-    }
-  }
-
-  if (price !== undefined && price !== '' && price !== null) {
-    const parsedPrice = parseFloat(price);
-    if (!isNaN(parsedPrice) && parsedPrice < 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Price cannot be negative',
       });
     }
   }
@@ -946,29 +946,33 @@ exports.updateProduct = async (req, res) => {
       });
     }
 
-    const priceNum = price !== undefined && price !== '' ? parseFloat(price) : null;
-    const discountPriceNum = discountPrice !== undefined && discountPrice !== '' ? parseFloat(discountPrice) : null;
+    const priceNum = price !== undefined && price !== '' && price !== null ? Number(price) : null;
+    const discountPriceNum = discountPrice !== undefined && discountPrice !== '' && discountPrice !== null
+      ? Number(discountPrice)
+      : null;
     const effectivePrice = priceNum !== null ? priceNum : product.price;
 
-    if (discountPriceNum !== null) {
-      if (discountPriceNum < 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'Discount price cannot be negative',
-        });
-      }
-      if (discountPriceNum >= effectivePrice) {
-        return res.status(400).json({
-          success: false,
-          message: 'Discount price must be less than the regular price',
-        });
-      }
-    }
-
-    if (priceNum !== null && priceNum < 0) {
+    if (priceNum !== null && (!Number.isFinite(priceNum) || priceNum < 0)) {
       return res.status(400).json({
         success: false,
-        message: 'Price cannot be negative',
+        message: 'Price must be a valid non-negative number',
+      });
+    }
+
+    if (discountPriceNum !== null && (!Number.isFinite(discountPriceNum) || discountPriceNum < 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Discount price must be a valid non-negative number',
+      });
+    }
+
+    const effectiveDiscountPrice = discountPriceNum !== null ? discountPriceNum : Number(product.discountPrice) || 0;
+    if ((priceNum !== null || discountPriceNum !== null)
+      && effectiveDiscountPrice > 0
+      && effectiveDiscountPrice >= effectivePrice) {
+      return res.status(400).json({
+        success: false,
+        message: 'Discount price must be less than the regular price',
       });
     }
 
@@ -1028,9 +1032,9 @@ exports.updateProduct = async (req, res) => {
     }
     if (description !== undefined && description !== null) product.description = description;
     if (price !== undefined && price !== '' && price !== null) product.price = parseFloat(price);
-    if (discountPrice !== undefined && discountPrice !== '') {
+    if (discountPrice !== undefined && discountPrice !== '' && discountPrice !== null) {
       product.discountPrice = parseFloat(discountPrice);
-    } else if (discountPrice === '' || discountPrice === undefined || discountPrice === null) {
+    } else if (discountPrice === '' || discountPrice === null) {
       product.discountPrice = 0;
     }
     if (stock !== undefined && stock !== '' && stock !== null) product.stock = parseInt(stock, 10);

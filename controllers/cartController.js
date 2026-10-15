@@ -12,10 +12,11 @@ const {
 } = require('../utils/orderProductResolver');
 
 const getProductPrice = (product) => {
-  if (product.discountPrice && product.discountPrice > 0) {
-    return product.discountPrice;
-  }
-  return product.price || 0;
+  const regularPrice = Number(product?.price) || 0;
+  const discountPrice = Number(product?.discountPrice);
+  return Number.isFinite(discountPrice) && discountPrice > 0 && discountPrice < regularPrice
+    ? discountPrice
+    : regularPrice;
 };
 
 const resolveShippingAddress = async (req, shippingAddress, addressId) => {
