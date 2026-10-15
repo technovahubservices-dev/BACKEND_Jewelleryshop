@@ -175,7 +175,7 @@ const createOrderFromItems = async (req, items, addressInput, idempotencyKey) =>
     { path: 'user', select: 'name email phone' },
   ]);
 
-  if (order.user && req.user && order.user._id.toString() === req.user._id.toString()) {
+  if (!isPrepaid && order.user && req.user && order.user._id.toString() === req.user._id.toString()) {
     sendOrderConfirmationEmail(order).catch((err) => {
       console.error('[cartController] Failed to send order confirmation email:', err.message);
     });
@@ -601,6 +601,24 @@ exports.checkout = asyncHandler(async (req, res) => {
     idempotencyKey,
   } = req.body;
 
+  if (idempotencyKey) {
+    const existingOrder = await Order.findOne({ idempotencyKey, user: req.user._id });
+    if (existingOrder) {
+      if (existingOrder.paymentMethod === 'cod') {
+        await Cart.updateOne({ user: req.user._id }, { $set: { items: [] } });
+      }
+      await Order.populate(existingOrder, [
+        { path: 'items.product' },
+        { path: 'user', select: 'name email phone' },
+      ]);
+      return res.status(200).json({
+        success: true,
+        message: 'Order already exists',
+        data: existingOrder,
+      });
+    }
+  }
+
   const cart = await Cart.findOne({ user: req.user._id }).populate(
     'items.product'
   );
@@ -634,8 +652,10 @@ exports.checkout = asyncHandler(async (req, res) => {
       idempotencyKey
     );
 
-    cart.items = [];
-    await cart.save();
+    if (paymentMethod === 'cod') {
+      cart.items = [];
+      await cart.save();
+    }
 
     res.status(201).json({
       success: true,

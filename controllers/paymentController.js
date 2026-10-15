@@ -1,4 +1,5 @@
 const Order = require('../models/Order');
+const Cart = require('../models/Cart');
 const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const Razorpay = require('razorpay');
@@ -68,11 +69,37 @@ const createPaymentOrder = asyncHandler(async (req, res) => {
     });
   }
 
+  if (
+    order.paymentGatewayOrderId &&
+    order.paymentStatus === 'pending' &&
+    order.paymentGateway === gateway &&
+    order.paymentMethod === paymentMethod
+  ) {
+    return res.status(200).json({
+      success: true,
+      data: {
+        gatewayOrderId: order.paymentGatewayOrderId,
+        amount: Math.round(order.totalPrice * 100),
+        currency: 'INR',
+        key: process.env.RAZORPAY_KEY_ID,
+        prefill: {
+          name: req.user.name || '',
+          email: req.user.email || '',
+          contact: req.user.phone || '',
+        },
+        orderId: order._id.toString(),
+        paymentMethod,
+      },
+    });
+  }
+
   try {
     const razorpayOrder = await getRazorpayInstance().orders.create({
       amount: Math.round(order.totalPrice * 100),
       currency: 'INR',
-      receipt: `order_${order._id.toString()}`,
+      receipt: order.paymentRetryCount
+        ? `order_${order._id.toString()}_retry_${order.paymentRetryCount + 1}`
+        : `order_${order._id.toString()}`,
       notes: {
         orderId: order._id.toString(),
         paymentMethod,
@@ -84,6 +111,7 @@ const createPaymentOrder = asyncHandler(async (req, res) => {
     order.paymentGatewayOrderId = razorpayOrder.id;
     order.paymentMethod = paymentMethod;
     order.paymentStatus = 'pending';
+    order.paymentFailureReason = '';
     order.status = 'pending_payment';
     order.paymentRetryCount = (order.paymentRetryCount || 0) + 1;
     await order.save();
@@ -147,6 +175,13 @@ const verifyPayment = asyncHandler(async (req, res) => {
     });
   }
 
+  if (!order.paymentGatewayOrderId || !['upi', 'card', 'net_banking'].includes(order.paymentMethod)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Payment order has not been initialized',
+    });
+  }
+
   const generatedSignature = crypto
     .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
     .update(`${order.paymentGatewayOrderId}|${paymentId}`)
@@ -189,6 +224,10 @@ const verifyPayment = asyncHandler(async (req, res) => {
       order.stockDeducted = false;
     }
     throw error;
+  }
+
+  if (order.user) {
+    await Cart.updateOne({ user: order.user }, { $set: { items: [] } });
   }
 
   const populatedOrder = await Order.populate(order, [
@@ -333,7 +372,10 @@ const handleWebhook = asyncHandler(async (req, res) => {
   }
 
   const event = req.body;
-  const orderId = event.payload?.order?.entity?.receipt?.replace('order_', '');
+  const receipt = event.payload?.order?.entity?.receipt || '';
+  const orderId = receipt.startsWith('order_')
+    ? receipt.slice('order_'.length).split('_retry_')[0]
+    : '';
   const paymentEntity = event.payload?.payment?.entity;
 
   if (!orderId) {
@@ -375,6 +417,10 @@ const handleWebhook = asyncHandler(async (req, res) => {
         throw error;
       }
 
+      if (order.user) {
+        await Cart.updateOne({ user: order.user }, { $set: { items: [] } });
+      }
+
       const populatedOrder = await Order.populate(order, [
         { path: 'items.product' },
         { path: 'user', select: 'name email phone' },
@@ -386,7 +432,11 @@ const handleWebhook = asyncHandler(async (req, res) => {
         });
       }
     }
-  } else if (event.event === 'payment.failed') {
+  } else if (
+    event.event === 'payment.failed' &&
+    !order.isPaid &&
+    paymentEntity?.order_id === order.paymentGatewayOrderId
+  ) {
     order.paymentStatus = 'failed';
     order.paymentFailureReason = paymentEntity?.error_description || 'Payment failed';
     order.status = 'cancelled';
@@ -398,7 +448,11 @@ const handleWebhook = asyncHandler(async (req, res) => {
       updatedBy: order.user,
     });
     await order.save();
-  } else if (event.event === 'payment.cancelled') {
+  } else if (
+    event.event === 'payment.cancelled' &&
+    !order.isPaid &&
+    paymentEntity?.order_id === order.paymentGatewayOrderId
+  ) {
     order.paymentStatus = 'failed';
     order.paymentFailureReason = 'Payment cancelled by user';
     order.status = 'cancelled';

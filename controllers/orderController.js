@@ -105,7 +105,7 @@ exports.createOrder = asyncHandler(async (req, res) => {
   const { items, shippingAddress, paymentMethod, shippingPrice, discount, idempotencyKey } = req.body;
 
   if (idempotencyKey) {
-    const existingOrder = await Order.findOne({ idempotencyKey });
+    const existingOrder = await Order.findOne({ idempotencyKey, user: req.user._id });
     if (existingOrder) {
       await Order.populate(existingOrder, ORDER_POPULATE);
       return res.status(200).json({
@@ -205,7 +205,9 @@ exports.createOrder = asyncHandler(async (req, res) => {
 
   await Order.populate(order, ORDER_POPULATE);
 
-  sendOrderEmailSafe(order).catch(() => {});
+  if (!isPrepaid) {
+    sendOrderEmailSafe(order).catch(() => {});
+  }
 
   res.status(201).json({
     success: true,
