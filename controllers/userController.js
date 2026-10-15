@@ -82,7 +82,9 @@ const addAddress = asyncHandler(async (req, res) => {
   }
 
   if (isDefault) {
-    user.addresses = user.addresses.map((addr) => ({ ...addr, isDefault: false }));
+    user.addresses.forEach((addr) => {
+      addr.isDefault = false;
+    });
   }
 
   user.addresses.push({
@@ -121,23 +123,23 @@ const updateAddress = asyncHandler(async (req, res) => {
 
   const { fullName, phone, address, landmark, city, state, pincode, isDefault } = req.body;
 
-  const previousDefaultId = user.addresses[addressIndex]._id.toString();
+  const savedAddress = user.addresses[addressIndex];
+  const previousDefaultId = savedAddress._id.toString();
 
   if (isDefault) {
-    user.addresses = user.addresses.map((addr) => ({ ...addr, isDefault: false }));
+    user.addresses.forEach((addr) => {
+      addr.isDefault = false;
+    });
   }
 
-  user.addresses[addressIndex] = {
-    ...user.addresses[addressIndex],
-    fullName: fullName ? fullName.trim() : user.addresses[addressIndex].fullName,
-    phone: phone !== undefined ? phone.trim() : user.addresses[addressIndex].phone,
-    address: address ? address.trim() : user.addresses[addressIndex].address,
-    landmark: landmark !== undefined ? landmark.trim() : user.addresses[addressIndex].landmark,
-    city: city ? city.trim() : user.addresses[addressIndex].city,
-    state: state ? state.trim() : user.addresses[addressIndex].state,
-    pincode: pincode ? pincode.trim() : user.addresses[addressIndex].pincode,
-    isDefault: isDefault !== undefined ? isDefault : user.addresses[addressIndex].isDefault,
-  };
+  if (fullName !== undefined) savedAddress.fullName = fullName.trim();
+  if (phone !== undefined) savedAddress.phone = phone.trim();
+  if (address !== undefined) savedAddress.address = address.trim();
+  if (landmark !== undefined) savedAddress.landmark = landmark.trim();
+  if (city !== undefined) savedAddress.city = city.trim();
+  if (state !== undefined) savedAddress.state = state.trim();
+  if (pincode !== undefined) savedAddress.pincode = pincode.trim();
+  if (isDefault !== undefined) savedAddress.isDefault = isDefault;
 
   const hasDefault = user.addresses.some((addr) => addr.isDefault);
   if (!hasDefault && user.addresses.length > 0) {
@@ -201,10 +203,9 @@ const setDefaultAddress = asyncHandler(async (req, res) => {
     return res.status(404).json({ success: false, message: 'Address not found' });
   }
 
-  user.addresses = user.addresses.map((addr) => ({
-    ...addr,
-    isDefault: addr._id.toString() === addressId,
-  }));
+  user.addresses.forEach((addr) => {
+    addr.isDefault = addr._id.toString() === addressId;
+  });
 
   await user.save();
 
