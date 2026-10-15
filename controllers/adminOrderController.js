@@ -123,7 +123,16 @@ exports.adminGetOrders = asyncHandler(async (req, res) => {
   const query = {};
 
   if (search && String(search).trim()) {
-    const searchRegex = { $regex: search, $options: 'i' };
+    const searchTerm = String(search).trim();
+    const escapedSearch = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const searchRegex = { $regex: escapedSearch, $options: 'i' };
+    const matchingUsers = await User.find({
+      $or: [
+        { name: searchRegex },
+        { email: searchRegex },
+      ],
+    }).select('_id').lean();
+
     query.$or = [
       { orderNumber: searchRegex },
       { invoiceNumber: searchRegex },
@@ -131,10 +140,15 @@ exports.adminGetOrders = asyncHandler(async (req, res) => {
       { 'billingAddress.fullName': searchRegex },
       { 'shippingAddress.phone': searchRegex },
       { 'billingAddress.phone': searchRegex },
+      { 'items.name': searchRegex },
     ];
 
-    const searchObjectId = mongoose.Types.ObjectId.isValid(search)
-      ? new mongoose.Types.ObjectId(search)
+    if (matchingUsers.length) {
+      query.$or.push({ user: { $in: matchingUsers.map(({ _id }) => _id) } });
+    }
+
+    const searchObjectId = mongoose.Types.ObjectId.isValid(searchTerm)
+      ? new mongoose.Types.ObjectId(searchTerm)
       : null;
 
     if (searchObjectId) {
@@ -143,16 +157,31 @@ exports.adminGetOrders = asyncHandler(async (req, res) => {
         { user: searchObjectId }
       );
     }
+
+    // The admin table displays the last six characters of the Mongo ID as its order ID.
+    if (searchTerm.length <= 24) {
+      query.$or.push({ $expr: {
+        $regexMatch: {
+          input: { $toString: '$_id' },
+          regex: `${escapedSearch}$`,
+          options: 'i',
+        },
+      } });
+    }
   }
 
   if (status) {
     const statusList = Array.isArray(status)
       ? status
-      : String(status).split(',').map((s) => s.trim()).filter(Boolean);
-    const validStatuses = statusList.filter((s) => Order.VALID_STATUSES.includes(s));
-    if (validStatuses.length > 0) {
-      query.status = { $in: validStatuses };
+      : String(status).split(',');
+    const normalizedStatuses = statusList
+      .map((s) => normalizeStatusValue(s).replace(/\s+/g, '_'))
+      .filter(Boolean);
+    const validStatuses = normalizedStatuses.filter((s) => Order.VALID_STATUSES.includes(s));
+    if (validStatuses.length === 0) {
+      return res.status(400).json({ success: false, message: 'Invalid order status filter' });
     }
+    query.status = { $in: validStatuses };
   }
 
   if (paymentStatus) {
@@ -210,6 +239,7 @@ exports.adminGetOrders = asyncHandler(async (req, res) => {
     count: orders.length,
     total,
     page: pageNum,
+    limit: limitNum,
     pages: Math.ceil(total / limitNum),
     hasMore: pageNum < Math.ceil(total / limitNum),
     data: orders.map(buildAdminOrderResponse),
